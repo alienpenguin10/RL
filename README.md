@@ -67,10 +67,8 @@ python RL-Baselines/train_sac_car.py
 └── car_racing_env.py        # Car Racing environment simulation
 ```
 
-## 🧠 Algorithms Implemented
+## 🧠 Algorithms To Be Implemented
 
-- **Q-Learning**: Tabular reinforcement learning
-- **DQN (Deep Q-Network)**: Value-based deep RL
 - **REINFORCE**: Monte Carlo policy gradient
 - **VPG (Vanilla Policy Gradient)**: Basic policy gradient method
 - **PPO (Proximal Policy Optimization)**: State-of-the-art policy gradient
