@@ -1,6 +1,6 @@
 # Reinforcement Learning 
 
-![Car Racing Environment](assets/car_racing.jpeg)
+<img src="assets/car_racing.jpeg" alt="Car Racing Environment" width="500">
 
 A collection of reinforcement learning implementations focused on training agents for various environments, including the Car Racing environment.
 
