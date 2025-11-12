@@ -1,0 +1,9 @@
+numpy==2.3.4
+pandas==2.3.3
+pyarrow==22.0.0
+ray[rllib]==2.51.1
+gymnasium[box2d]
+tensorboardX==2.6.4
+torch==2.9.0
+swig
+pydantic
