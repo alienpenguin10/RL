@@ -1,5 +1,9 @@
 # Reinforcement Learning 
 
+![Car Racing Environment](assets/car_racing.jpeg)
+
+A collection of reinforcement learning implementations focused on training agents for various environments, including the Car Racing environment.
+
 ## 🚀 Setup
 
 ### Prerequisites
