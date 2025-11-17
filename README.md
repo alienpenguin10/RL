@@ -36,6 +36,13 @@ pip install -r requirements.txt
 ## 🎮 Usage
 
 ### Car Racing Environment
+
+To get a feel for the environment you can play the game manually:
+```bash
+python car_racing_manual.py
+```
+Controls: W (accelerate), A/D (steer), S (brake), ESC/Q (quit)
+
 Run the Car Racing simulation with random actions:
 ```bash
 python car_racing_env.py
