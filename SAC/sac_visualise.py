@@ -70,5 +70,4 @@ def visualize_episode(checkpoint_path, num_episodes=1, render=True):
 
 if __name__ == "__main__":
     checkpoint_path = os.getcwd() + "/checkpoints/100"
-    checkpoint_path = f"/Users/hugohafner/git/alienpenguin10/RL/checkpoints/100"
     visualize_episode(checkpoint_path, num_episodes=3, render=True)

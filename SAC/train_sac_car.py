@@ -1,3 +1,4 @@
+import os
 from ray.rllib.algorithms.sac import SACConfig
 from ray.tune.registry import register_env
 from env import env_creator
@@ -22,9 +23,10 @@ for i in range(101):
     result = algo.train()
     reward = result.get("env_runners/episode_return_mean", "N/A")
     print(f"Iteration {i}: reward={reward}")
+    checkpoint_path = os.getcwd() + "/checkpoints"
 
     if i % 10 == 0 and i != 0:
-        checkpoint = algo.save(f"/Users/hugohafner/git/alienpenguin10/RL/checkpoints/{i}")
+        checkpoint = algo.save(f"{checkpoint_path}/{i}")
         print(f"Checkpoint saved at {checkpoint}")
 
 algo.stop()
