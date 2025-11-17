@@ -8,6 +8,8 @@ A collection of reinforcement learning implementations focused on training agent
 
 ### Prerequisites
 
+Use python version between 3.10 to 3.12
+
 Before installation, ensure you have SWIG installed:
 
 **macOS:**
