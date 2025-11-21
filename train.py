@@ -1,0 +1,128 @@
+import gymnasium as gym
+import numpy as np
+from agents.reinforce import REINFORCEAgent
+from agents.vpg import VPGAgent
+from agents.ppo import PPOAgent
+import torch
+import os
+
+# Try to import wandb (optional)
+try:
+    import wandb
+    WANDB_AVAILABLE = True
+except ImportError:
+    WANDB_AVAILABLE = False
+    print("wandb not available - training will continue without logging")
+
+def train(env_name="CarRacing-v3", algo="vpg", max_episodes=1000):
+    # Initialize WandB if available
+    if WANDB_AVAILABLE:
+        wandb.init(
+            project="rl-training",
+            name=f"{algo}-{env_name}",
+            config={
+                "algorithm": algo,
+                "environment": env_name,
+                "max_episodes": max_episodes,
+                "learning_rate": 0.001 if algo == "reinforce" else 0.0003,
+            }
+        )
+    
+    # Create environment
+    # Note: render_mode=None for training speed
+    try:
+        env = gym.make(env_name, continuous=True, render_mode=None)
+    except gym.error.Error as e:
+        # Fallback or helpful error if environment not found
+        print(f"Environment {env_name} not found or error creating it: {e}")
+        print("Make sure gymnasium[box2d] is installed.")
+        return
+    
+    if algo == "reinforce":
+        agent = REINFORCEAgent(learning_rate=0.001)
+    elif algo == "vpg":
+        agent = VPGAgent(learning_rate=0.0003)
+    elif algo == "ppo":
+        agent = PPOAgent(learning_rate=0.0003, clip_ratio=0.2)
+    else:
+        raise ValueError(f"Unknown algorithm: {algo}")
+        
+    print(f"Training {algo} on {env_name} using device: {agent.device}")
+
+    for episode in range(max_episodes):
+        state, _ = env.reset()
+        episode_reward = 0
+        done = False
+        steps = 0
+        
+        while not done:
+            # Select action
+            if algo == "reinforce":
+                action, log_prob = agent.select_action(state)
+                value = None
+            else: # VPG, PPO same
+                action, log_prob, value = agent.select_action(state)
+            
+            # Step env
+            # Note: gymnasium returns terminated, truncated
+            next_state, reward, terminated, truncated, _ = env.step(action)
+            done = terminated or truncated
+            
+            # Store transition
+            # Ensure we pass all required arguments
+            agent.store_transition(state, action, reward, log_prob, done, value)
+            
+            state = next_state
+            episode_reward += reward
+            steps += 1
+            # Safety break for very long episodes during testing
+            if steps > 200 and max_episodes < 10:
+                 done = True
+            
+        # Update at end of episode (REINFORCE) or end of batch (VPG - here treating episode as batch)
+        loss = agent.update()
+        
+        # Log metrics to WandB if available
+        log_dict = {
+            "episode": episode,
+            "episode_reward": episode_reward,
+            "episode_steps": steps,
+        }
+        
+        # Handle tuple return from VPG update
+        if isinstance(loss, tuple):
+            policy_loss, vf_loss, info = loss
+            log_dict.update({
+                "policy_loss": policy_loss,
+                "value_function_loss": vf_loss,
+            })
+            print(f"Episode {episode} | Reward: {episode_reward:.2f} | Policy Loss: {policy_loss:.4f} | VF Loss: {vf_loss:.4f}")
+        else:
+            log_dict["loss"] = loss
+            print(f"Episode {episode} | Reward: {episode_reward:.2f} | Loss: {loss:.4f}")
+        
+        if WANDB_AVAILABLE:
+            wandb.log(log_dict)
+        
+        if episode % 10 == 0:
+            agent.save_model(f"./models/{algo}_{episode}.pth")
+
+    if WANDB_AVAILABLE:
+        wandb.finish()
+
+if __name__ == "__main__":
+    # Set WandB API key if available
+    if WANDB_AVAILABLE:
+        os.environ["WANDB_API_KEY"] = "dea7d241b4217750d3ee58eaec94c6f9349727fb"
+    
+    # Ensure models directory exists
+    os.makedirs("./models", exist_ok=True)
+    
+    # print("--- Testing VPG for 2 episodes ---")
+    # train(algo="vpg", max_episodes=2)
+    
+    # print("\n--- Testing REINFORCE for 2 episodes ---")
+    # train(algo="reinforce", max_episodes=2)
+
+    print("\n--- Testing PPO for 2 episodes ---")
+    train(algo="ppo", max_episodes=2)

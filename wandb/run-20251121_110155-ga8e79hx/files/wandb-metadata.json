@@ -1,0 +1,37 @@
+{
+  "os": "macOS-15.6.1-arm64-arm-64bit-Mach-O",
+  "python": "CPython 3.13.7",
+  "startedAt": "2025-11-21T11:01:55.618152Z",
+  "program": "/Users/varnie/Projects/RL/train.py",
+  "codePath": "train.py",
+  "codePathLocal": "train.py",
+  "git": {
+    "remote": "https://github.com/alienpenguin10/RL.git",
+    "commit": "19e3a71cc9cd42253310dc30cb377e9598569d09"
+  },
+  "email": "dev@alienpenguin.com",
+  "root": "/Users/varnie/Projects/RL",
+  "host": "varniethans-MacBook-Air.local",
+  "executable": "/Users/varnie/Projects/RL/rl/bin/python",
+  "cpu_count": 8,
+  "cpu_count_logical": 8,
+  "disk": {
+    "/": {
+      "total": "245107195904",
+      "used": "227046772736"
+    }
+  },
+  "memory": {
+    "total": "8589934592"
+  },
+  "apple": {
+    "name": "Apple M1",
+    "ecpuCores": 4,
+    "pcpuCores": 4,
+    "gpuCores": 7,
+    "memoryGb": 8,
+    "swapTotalBytes": "4294967296",
+    "ramTotalBytes": "8589934592"
+  },
+  "writerId": "1ozg4ccnfwdbdi3fdximg520f2whn8ga"
+}

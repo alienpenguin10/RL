@@ -31,6 +31,7 @@ source rl/bin/activate  # On Windows: rl\Scripts\activate
 2. Install dependencies:
 ```bash
 pip install -r requirements.txt
+pip install "ray[rllib]" torch
 ```
 
 ## 🎮 Usage

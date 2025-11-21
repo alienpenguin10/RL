@@ -1,0 +1,58 @@
+_wandb:
+    value:
+        cli_version: 0.23.0
+        e:
+            tmk9tb46wzvh4xdzs60vbn613fup70h5:
+                apple:
+                    ecpuCores: 4
+                    gpuCores: 7
+                    memoryGb: 8
+                    name: Apple M1
+                    pcpuCores: 4
+                    ramTotalBytes: "8589934592"
+                    swapTotalBytes: "4294967296"
+                codePath: train.py
+                codePathLocal: train.py
+                cpu_count: 8
+                cpu_count_logical: 8
+                disk:
+                    /:
+                        total: "245107195904"
+                        used: "226953015296"
+                email: dev@alienpenguin.com
+                executable: /Users/varnie/Projects/RL/rl/bin/python
+                git:
+                    commit: 19e3a71cc9cd42253310dc30cb377e9598569d09
+                    remote: https://github.com/alienpenguin10/RL.git
+                host: varniethans-MacBook-Air.local
+                memory:
+                    total: "8589934592"
+                os: macOS-15.6.1-arm64-arm-64bit-Mach-O
+                program: /Users/varnie/Projects/RL/train.py
+                python: CPython 3.13.7
+                root: /Users/varnie/Projects/RL
+                startedAt: "2025-11-21T10:59:29.040206Z"
+                writerId: tmk9tb46wzvh4xdzs60vbn613fup70h5
+        m: []
+        python_version: 3.13.7
+        t:
+            "1":
+                - 1
+            "2":
+                - 1
+            "3":
+                - 2
+                - 13
+                - 16
+            "4": 3.13.7
+            "5": 0.23.0
+            "12": 0.23.0
+            "13": darwin-arm64
+algorithm:
+    value: vpg
+environment:
+    value: CarRacing-v3
+learning_rate:
+    value: 0.0003
+max_episodes:
+    value: 2

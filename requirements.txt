@@ -7,3 +7,5 @@ tensorboardX==2.6.4
 torch==2.9.0
 swig
 pydantic
+matplotlib
+wandb
