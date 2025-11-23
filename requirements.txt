@@ -9,3 +9,4 @@ swig
 pydantic
 matplotlib
 wandb
+onnx

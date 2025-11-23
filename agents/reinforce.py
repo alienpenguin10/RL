@@ -7,7 +7,6 @@ import torch.optim as optim
 class REINFORCEAgent(BaseAgent):
     def __init__(self, learning_rate=0.001, gamma=0.99):
         super().__init__(learning_rate, gamma)
-        # Move network to device
         self.policy_network = PolicyNetwork().to(self.device)
         self.optimizer = optim.Adam(self.policy_network.parameters(), lr=learning_rate)
     
@@ -16,7 +15,8 @@ class REINFORCEAgent(BaseAgent):
         # Use step, not select_action
         action, log_prob = self.policy_network.step(state_tensor)
 
-        # Return action as numpy, keep log_prob as tensor for graph
+        # Return action as numpy (thats what env expects) also remove batch dimension, keep log_prob as tensor for graph
+        # action:(batch_size, 3) = [[steering, gas, brake]] -> action.squeeze(0):(3,) = [steering, gas, brake]
         return action.squeeze(0).cpu().numpy(), log_prob
 
     def update(self):

@@ -42,6 +42,7 @@ class PolicyNetwork(nn.Module):
         self.brake_log_std = nn.Linear(64, 1) 
 
         # Constants for log_std clamping
+        # This is used to prevent the log_std from becoming too large or too small
         self.LOG_STD_MIN = -20
         self.LOG_STD_MAX = 2
 
@@ -79,46 +80,64 @@ class PolicyNetwork(nn.Module):
         return means, log_stds
 
     def step(self, state):
-        """
-        Returns action, log_prob for training
-        """
+        # Step 1: Forward pass
+        # Input: state shape (batch_size=1, 3, 96, 96) - RGB image
         # State is already a tensor on device from agent.preprocess_state
-        means, log_stds = self.forward(state)
-        stds = torch.exp(log_stds)
+        means, log_stds = self.forward(state) # means:(batch_size, 3) = [[steering_mean, gas_mean, brake_mean]], log_stds:(batch_size, 3) = [[steering_log_std, gas_log_std, brake_log_std]]
+        
+        # Step 2: Convert log_std to std
+        stds = torch.exp(log_stds) # stds:(batch_size, 3) = [[steering_std, gas_std, brake_std]]
+        
+        # Step 3: Create Gaussian distribution
+        # Creates 3 independent Normal distributions:
+        #    Steering: Normal(mean=0.2, std=0.223) 
+        #    Gas:      Normal(mean=0.7, std=0.135)  
+        #    Brake:    Normal(mean=0.1, std=0.050)
         dist = torch.distributions.Normal(means, stds)
+        action = dist.sample() # action:(batch_size, 3) = [[steering_raw, gas_raw, brake_raw]]
         
-        action = dist.sample()
+        # Step 4: Calculate log probability (BEFORE clamping)
+        # Important: Calculate log_prob using original sampled values, not clamped ones!
+        # This ensures the probability math matches the distribution we sampled from
+        log_prob = dist.log_prob(action).sum(dim=1) # log_prob:(batch_size,) = [total_log_prob] = [log_prob_steering + log_prob_gas + log_prob_brake] = [log(Normal(0.2, 0.223).pdf(steering_raw)) + log(Normal(0.7, 0.135).pdf(gas_raw)) + log(Normal(0.1, 0.050).pdf(brake_raw))]
         
-        # Calculate log_prob BEFORE clamping to keep math consistent with distribution
-        # Sum log probs across dimensions (steering + gas + brake)
-        log_prob = dist.log_prob(action).sum(dim=1)
-        
-        # Now clamp actions for the environment
-        action[:, 0] = torch.clamp(action[:, 0], -1, 1)
-        action[:, 1] = torch.clamp(action[:, 1], 0, 1)
-        action[:, 2] = torch.clamp(action[:, 2], 0, 1)
+        # Step 5: Clamp actions to valid environment ranges
+        # action[0] = steering ∈ [-1, 1]    (left/right turn)
+        # action[1] = gas ∈ [0, 1]          (0=no gas, 1=full gas)
+        # action[2] = brake ∈ [0, 1]        (0=no brake, 1=full brake)
+        action[:, 0] = torch.clamp(action[:, 0], -1, 1)   # Steering: [-1, 1]
+        action[:, 1] = torch.clamp(action[:, 1], 0, 1)    # Gas: [0, 1]
+        action[:, 2] = torch.clamp(action[:, 2], 0, 1)    # Brake: [0, 1]
 
+        # action:(batch_size, 3) = [[steering, gas, brake]]
+        # log_prob:(batch_size,) = [total_log_prob]
         return action, log_prob
 
     def act(self, state):
-        """
-        Act method: returns only action (for evaluation/testing)
-        """
         with torch.no_grad():
             # We can use step but ignore log_prob
             action, _ = self.step(state)
             return action.cpu().numpy()
 
     def get_log_prob(self, states, actions):
-        """
-        Compute log probability of actions given states
-        Used during policy update
-        """
-        means, log_stds = self.forward(states)
-        stds = torch.exp(log_stds)
-        dist = torch.distributions.Normal(means, stds)
+        # states, actions are taken from experiecne replay buffer and get_log_prob computes what log probability the current policy would give those states and actions 
+        # Computes log π(a|s): Allows recomputing log_prob with gradients during policy updates
+        # Part of the policy gradient: ∇θ J(θ) = E[∇θ log π(a|s) * A]
+        # Enables backpropagation (gradient can flow): get_log_prob -> policy_network -> policy_loss -> optimizer.step()
+
+        # Step 1: Forward pass  
+        means, log_stds = self.forward(states) # means:(batch_size, 3) = [[steering_mean, gas_mean, brake_mean]], log_stds:(batch_size, 3) = [[steering_log_std, gas_log_std, brake_log_std]]
+        
+        # Step 2: Convert log_std to std
+        stds = torch.exp(log_stds) # stds:(batch_size, 3) = [[steering_std, gas_std, brake_std]]
+        
+        # Step 3: Create Gaussian distribution
+        dist = torch.distributions.Normal(means, stds) # dist: Gaussian distribution with mean and std
+        
+        # Step 4: Calculate log probability
         # Important: sum log_probs across the action dimensions
-        log_probs = dist.log_prob(actions).sum(dim=1)
+        log_probs = dist.log_prob(actions).sum(dim=1) # log_probs:(batch_size,) = [total_log_prob] = [log_prob_steering + log_prob_gas + log_prob_brake] = [log(Normal(0.2, 0.223).pdf(steering_raw)) + log(Normal(0.7, 0.135).pdf(gas_raw)) + log(Normal(0.1, 0.050).pdf(brake_raw))]
+        
         return log_probs
 
 

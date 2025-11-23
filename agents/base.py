@@ -9,11 +9,9 @@ class BaseAgent:
         # Detect device here to be used by all children
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         
-        # Standardized memory
         self.clear_memory()
 
     def clear_memory(self):
-        # Renamed to 'clear_memory' to be generic for all agents
         self.states = []
         self.actions = []
         self.rewards = []
@@ -28,11 +26,11 @@ class BaseAgent:
         self.rewards.append(reward)
         self.log_probs.append(log_prob)
         self.dones.append(done) # Important for handling episode ends
-        if value is not None:
-            self.values.append(value)
+        self.values.append(value)
 
     def preprocess_state(self, state):
         # Input: (96, 96, 3) -> Output:(1, 3, 96, 96) on DEVICE
+        # Pytorch expects CHW format but state is HWC, so we need to permute the dimensions
         if isinstance(state, np.ndarray):
             state = torch.FloatTensor(state).permute(2,0,1).unsqueeze(0)
         return state #.to(self.device) # Crucial: Move to GPU
