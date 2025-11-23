@@ -107,4 +107,4 @@ class VPGAgent(BaseAgent):
 
         self.clear_memory()
 
-        return policy_loss.item()
+        return policy_loss.item(), vf_loss_avg/ self.train_v_iters, None
