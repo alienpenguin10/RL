@@ -118,11 +118,11 @@ if __name__ == "__main__":
     # Ensure models directory exists
     os.makedirs("./models", exist_ok=True)
     
-    # print("--- Testing VPG for 2 episodes ---")
-    # train(algo="vpg", max_episodes=2)
-    
-    # print("\n--- Testing REINFORCE for 2 episodes ---")
-    # train(algo="reinforce", max_episodes=2)
+    # print("\n--- Testing REINFORCE for 5000 episodes ---")
+    # train(algo="reinforce", max_episodes=5000
 
-    print("\n--- Testing PPO for 2 episodes ---")
-    train(algo="ppo", max_episodes=2)
+    # print("--- Testing VPG for 3000 episodes ---")
+    # train(algo="vpg", max_episodes=3000)
+        
+    print("\n--- Testing PPO for 3000 episodes ---")
+    train(algo="ppo", max_episodes=3000)

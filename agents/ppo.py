@@ -16,7 +16,7 @@ import torch.optim as optim
 import os
 
 class PPOAgent(BaseAgent):
-    def __init__(self, learning_rate=0.0003, vf_lr=0.001, gamma=0.99, lam=0.97, clip_ratio=0.2, target_k1=0.01, train_pi_iters=80, train_v_iters=80, max_ep_len=1000):
+    def __init__(self, learning_rate=0.0003, vf_lr=0.001, gamma=0.99, lam=0.97, clip_ratio=0.2, target_k1=0.01, train_pi_iters=10, train_v_iters=40, max_ep_len=1000):
         super().__init__(learning_rate, gamma)
         self.vf_lr = vf_lr
         self.lam = lam
@@ -73,7 +73,10 @@ class PPOAgent(BaseAgent):
 
     def update(self):
         # convert list to tensor on Device
-        states_tensor = torch.FloatTensor(np.array(self.states)).permute(0, 3, 1, 2).to(self.device)
+        # states_tensor = torch.FloatTensor(np.array(self.states)).permute(0, 3, 1, 2).to(self.device)
+        # Stack the list of tensors directly
+        # squeeze(1) is needed because preprocess adds a batch dim of 1
+        states_tensor = torch.cat(self.states).squeeze(1).to(self.device)
         actions_tensor = torch.FloatTensor(self.actions).to(self.device)
         log_probs_old_tensor = torch.stack(self.log_probs).detach().to(self.device)
         rewards_tensor = torch.FloatTensor(self.rewards).to(self.device)
