@@ -28,12 +28,17 @@ class REINFORCEAgent(BaseAgent):
         log_probs_tensor = torch.cat(self.log_probs).to(self.device)
 
         # REINFORCE Loss: -mean( log_prob * G_t )
+        # Gradient ascent via descent
+        # RL goal = maximize expected return, J(θ) = E[∑ R_t | π_θ]
+        # Policy Gradient Theorem: ∇_θ J(θ) = E[∇_θ log π_θ(a|s) * G_t]
+        # Prob: Neural network optimizers (SGD, Adam) minimize loss, not maximize rewards
+        # To maximize J(θ) = minimize -J(θ)
         policy_loss = -(log_probs_tensor * returns).mean()
 
         self.optimizer.zero_grad()
-        policy_loss.backward()
+        policy_loss.backward() # How much each policy parameter contributes to the loss
         torch.nn.utils.clip_grad_norm_(self.policy_network.parameters(), max_norm=0.5)
-        self.optimizer.step()
+        self.optimizer.step() # Update the policy parameters by new_weight = current_weight - learning_rate * gradient
         
         self.clear_memory() # Use standardized name
         return policy_loss.item()

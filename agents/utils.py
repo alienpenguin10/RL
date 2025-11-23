@@ -1,6 +1,7 @@
 """
 Utility functions for VPG: GAE-Lambda computation and other helpers
 """
+from math import e
 import numpy as np
 import torch
 
@@ -86,15 +87,17 @@ def normalize_advantages(advantages):
         mean = advantages.mean()
         std = advantages.std()
         return (advantages - mean) / (std + 1e-8)
+    else:
+        raise ValueError("Advantages must be a torch.Tensor")
     
 
 def compute_returns(rewards, discount_factor=0.99):
-     #Compute return G_t = Σ(k=t to T-1) γ^(k-t) * r_k
+    #Compute return G_t = Σ(k=t to T-1) γ^(k-t) * r_k
     returns = []
     G = 0
     for reward in reversed(rewards):
         G = discount_factor * G + reward
-        returns.insert(0, G)
+        returns.insert(0, G) # Insert at the beginning of the list so the first return will be at the last index by the end
     return torch.tensor(returns)
 
 
