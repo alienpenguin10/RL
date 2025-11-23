@@ -1,6 +1,7 @@
 .idea
 checkpoints
 wandb
+rl/
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
