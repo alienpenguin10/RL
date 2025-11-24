@@ -21,7 +21,9 @@ try:
     from dotenv import load_dotenv
     load_dotenv()
 except ImportError:
-    print("python-dotenv not installed - environment variables will not be loaded from .env file")
+    print("ERROR: python-dotenv is required but not installed.")
+    print("Please install it with: pip install python-dotenv")
+    sys.exit(1)
 
 def train(env_name="CarRacing-v3", algo="vpg", max_episodes=1000):
     # Initialize WandB if available
@@ -143,8 +145,16 @@ def train(env_name="CarRacing-v3", algo="vpg", max_episodes=1000):
     env.close()
 
 if __name__ == "__main__":
-    # WandB API key is loaded from .env file via dotenv
-    # If not set in .env, wandb will use the key from environment or prompt for login
+    # Check for WandB API key - fail if not set
+    if WANDB_AVAILABLE:
+        wandb_api_key = os.getenv("WANDB_API_KEY")
+        if not wandb_api_key:
+            print("ERROR: WANDB_API_KEY is not set.")
+            print("Please create a .env file with your WandB API key.")
+            print("See README.md for setup instructions.")
+            print("\nExample .env file:")
+            print("  WANDB_API_KEY=your_api_key_here")
+            sys.exit(1)
     
     # Ensure models directory exists
     os.makedirs("./models", exist_ok=True)
@@ -156,4 +166,4 @@ if __name__ == "__main__":
     # train(algo="vpg", max_episodes=3000)
         
     print("\n--- Testing PPO for 3000 episodes ---")
-    train(algo="reinforce", max_episodes=3000)
+    train(algo="reinforce", max_episodes=200)
