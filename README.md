@@ -34,6 +34,14 @@ pip install -r requirements.txt
 pip install "ray[rllib]" torch
 ```
 
+3. Set up environment variables:
+```bash
+cp .env.example .env
+# Edit .env and add your WandB API key
+```
+
+**Note:** The `.env` file contains your WandB API key for experiment tracking. Make sure to add `.env` to your `.gitignore` to keep your API key secure.
+
 ## 🎮 Usage
 
 ### Car Racing Environment
