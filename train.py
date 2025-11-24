@@ -152,8 +152,6 @@ if __name__ == "__main__":
             print("ERROR: WANDB_API_KEY is not set.")
             print("Please create a .env file with your WandB API key.")
             print("See README.md for setup instructions.")
-            print("\nExample .env file:")
-            print("  WANDB_API_KEY=your_api_key_here")
             sys.exit(1)
     
     # Ensure models directory exists
