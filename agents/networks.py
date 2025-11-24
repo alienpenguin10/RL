@@ -119,6 +119,11 @@ class PolicyNetwork(nn.Module):
             action, _ = self.step(state)
             return action.cpu().numpy()
 
+    def infer(self, state):
+        with torch.no_grad():
+            means, _ = self.forward(state)
+            return means.cpu().numpy()
+
     def get_log_prob(self, states, actions):
         # states, actions are taken from experiecne replay buffer and get_log_prob computes what log probability the current policy would give those states and actions 
         # Computes log π(a|s): Allows recomputing log_prob with gradients during policy updates
