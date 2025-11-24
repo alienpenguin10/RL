@@ -10,3 +10,4 @@ pydantic
 matplotlib
 wandb
 onnx
+python-dotenv
