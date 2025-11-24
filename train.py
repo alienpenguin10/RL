@@ -5,6 +5,8 @@ from agents.vpg import VPGAgent
 from agents.ppo import PPOAgent
 import torch
 import os
+import signal
+import sys
 
 # Try to import wandb (optional)
 try:
@@ -13,6 +15,15 @@ try:
 except ImportError:
     WANDB_AVAILABLE = False
     print("wandb not available - training will continue without logging")
+
+# Load environment variables from .env file
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:
+    print("ERROR: python-dotenv is required but not installed.")
+    print("Please install it with: pip install python-dotenv")
+    sys.exit(1)
 
 def train(env_name="CarRacing-v3", algo="vpg", max_episodes=1000):
     # Initialize WandB if available
@@ -48,8 +59,25 @@ def train(env_name="CarRacing-v3", algo="vpg", max_episodes=1000):
         raise ValueError(f"Unknown algorithm: {algo}")
         
     print(f"Training {algo} on {env_name} using device: {agent.device}")
+    
+    # Track current episode for saving on interrupt
+    current_episode = [0]  # Use list to allow modification in nested function
+    
+    def save_on_interrupt(signum, frame):
+        """Save model when interrupted (Ctrl+C)"""
+        print(f"\n\nInterrupted! Saving model from episode {current_episode[0]}...")
+        agent.save_model(f"./models/{algo}_{current_episode[0]}_interrupted.pth")
+        print(f"Model saved to ./models/{algo}_{current_episode[0]}_interrupted.pth")
+        if WANDB_AVAILABLE:
+            wandb.finish()
+        env.close()
+        sys.exit(0)
+    
+    # Register signal handler for graceful shutdown
+    signal.signal(signal.SIGINT, save_on_interrupt)
 
     for episode in range(max_episodes):
+        current_episode[0] = episode
         state, _ = env.reset()
         episode_reward = 0
         done = False
@@ -106,14 +134,25 @@ def train(env_name="CarRacing-v3", algo="vpg", max_episodes=1000):
         
         if episode % 10 == 0:
             agent.save_model(f"./models/{algo}_{episode}.pth")
-
+    
+    # Save final model
+    print(f"\nTraining complete! Saving final model...")
+    agent.save_model(f"./models/{algo}_{max_episodes-1}_final.pth")
+    
     if WANDB_AVAILABLE:
         wandb.finish()
+    
+    env.close()
 
 if __name__ == "__main__":
-    # Set WandB API key if available
+    # Check for WandB API key - fail if not set
     if WANDB_AVAILABLE:
-        os.environ["WANDB_API_KEY"] = "dea7d241b4217750d3ee58eaec94c6f9349727fb"
+        wandb_api_key = os.getenv("WANDB_API_KEY")
+        if not wandb_api_key:
+            print("ERROR: WANDB_API_KEY is not set.")
+            print("Please create a .env file with your WandB API key.")
+            print("See README.md for setup instructions.")
+            sys.exit(1)
     
     # Ensure models directory exists
     os.makedirs("./models", exist_ok=True)
@@ -125,4 +164,4 @@ if __name__ == "__main__":
     # train(algo="vpg", max_episodes=3000)
         
     print("\n--- Testing PPO for 3000 episodes ---")
-    train(algo="ppo", max_episodes=3000)
+    train(algo="reinforce", max_episodes=200)
