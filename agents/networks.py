@@ -37,9 +37,6 @@ class PolicyNetwork(nn.Module):
         self.LOG_STD_MAX = 2
 
     def forward(self, x):
-        # Normalize pixel values to [0, 1]
-        x = x.float() / 255.0
-
         # CNN processing
         x = self.convnet(x)
         x = x.reshape(x.size(0), -1)  # Flatten, prev .view() didn't work, errored saying the data is contiguous
@@ -174,3 +171,4 @@ class ConvNet(nn.Module):
         x = torch.relu(self.conv3(x))
         x = torch.relu(self.conv4(x))
         x = torch.relu(self.conv5(x))
+        return x

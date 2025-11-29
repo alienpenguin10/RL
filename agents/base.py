@@ -17,15 +17,17 @@ class BaseAgent:
         self.rewards = []
         self.log_probs = []
         self.values = []
-        self.dones = []  # Added 'dones' which is needed for VPG/PPO
+        self.terminated = []
+        self.truncated = []
 
-    def store_transition(self, state, action, reward, log_prob, done, value=None):
+    def store_transition(self, state, action, reward, log_prob, terminated, truncated, value=None):
         # Standardized signature
         self.states.append(state)
         self.actions.append(action)
         self.rewards.append(reward)
         self.log_probs.append(log_prob)
-        self.dones.append(done) # Important for handling episode ends
+        self.terminated.append(terminated) 
+        self.truncated.append(truncated) 
         self.values.append(value)
 
     def preprocess_state(self, state):
