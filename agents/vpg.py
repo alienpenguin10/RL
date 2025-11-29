@@ -33,31 +33,33 @@ class VPGAgent(BaseAgent):
         return action.squeeze(0).cpu().numpy(), log_prob, value.squeeze(0)
 
     def update(self):
-        # convert list to tensor on DEVICE
+        # convert list to tensor on device
         states_tensor = torch.FloatTensor(np.array(self.states)).permute(0, 3, 1, 2).to(self.device)
         actions_tensor = torch.FloatTensor(np.array(self.actions)).to(self.device)
         rewards_tensor = torch.FloatTensor(self.rewards).to(self.device)
         
         # log_probs are already tensors, just stack
+        # if two tensors, x = [1, 2, 3], y = [4, 5, 6], then torch.stack(x, y) = tensor([[1, 2, 3],[4, 5, 6]])
+        # c.f torch.cat(x, y) = tensor([1, 2, 3, 4, 5, 6])
         log_probs_tensor = torch.stack(self.log_probs).to(self.device)
         
         values_tensor = torch.stack(self.values).to(self.device)
         dones_tensor = torch.FloatTensor(self.dones).to(self.device)
 
         # Compute next values for GAE
+        # For each state, s_t in the trajectory, compute the value of the next state, V(s_{t+1})
+        # Terminal states (dones[i] = True), Last state in the trajectory (i == len(self.states) - 1) will have next value 0 as no future rewards after that point
         next_val_buf = []
         with torch.no_grad():
             for i in range(len(self.states)):
-                if self.dones[i]:
+                if self.dones[i]: # terminal state
                     next_val_buf.append(0.0)
-                elif i == len(self.states) - 1:
-                    # Last step in buffer
+                elif i == len(self.states) - 1: # last step in buffer
                     next_val_buf.append(0.0)
                 else:
-                    # Use the tensor already on device
                     next_state = states_tensor[i+1].unsqueeze(0)
                     next_val = self.value_network(next_state).item()
-                    next_val_buf.append(next_val)
+                    next_val_buf.append(next_val) 
         
         next_values = torch.tensor(next_val_buf, device=self.device, dtype=torch.float32)
         
@@ -107,4 +109,4 @@ class VPGAgent(BaseAgent):
 
         self.clear_memory()
 
-        return policy_loss.item(), vf_loss_avg/ self.train_v_iters, None
+        return policy_loss.item(), vf_loss_avg, None

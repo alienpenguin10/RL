@@ -54,7 +54,7 @@ class PolicyNetwork(nn.Module):
         x = torch.relu(self.conv1(x))
         x = torch.relu(self.conv2(x))
         x = torch.relu(self.conv3(x))
-        x = x.view(x.size(0), -1)  # Flatten
+        x = x.reshape(x.size(0), -1)  # Flatten, prev .view() didn't work, errored saying the data is contiguous
         x = torch.relu(self.fc1(x))
         x = torch.relu(self.fc2(x))
         
@@ -99,6 +99,7 @@ class PolicyNetwork(nn.Module):
         # Step 4: Calculate log probability (BEFORE clamping)
         # Important: Calculate log_prob using original sampled values, not clamped ones!
         # This ensures the probability math matches the distribution we sampled from
+        # Needed in loss function calculation
         log_prob = dist.log_prob(action).sum(dim=1) # log_prob:(batch_size,) = [total_log_prob] = [log_prob_steering + log_prob_gas + log_prob_brake] = [log(Normal(0.2, 0.223).pdf(steering_raw)) + log(Normal(0.7, 0.135).pdf(gas_raw)) + log(Normal(0.1, 0.050).pdf(brake_raw))]
         
         # Step 5: Clamp actions to valid environment ranges
@@ -162,7 +163,7 @@ class ValueNetwork(nn.Module):
         x = torch.relu(self.conv1(x))
         x = torch.relu(self.conv2(x))
         x = torch.relu(self.conv3(x))
-        x = x.view(x.size(0), -1)  # Flatten
+        x = x.reshape(x.size(0), -1)  # Flatten
         x = torch.relu(self.fc1(x))
         x = torch.relu(self.fc2(x))
         return self.fc3(x).squeeze(-1)  # Flatten to (batch,)

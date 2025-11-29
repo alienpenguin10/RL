@@ -23,7 +23,7 @@ def compute_gae_lambda(rewards, values, next_values, dones, gamma=0.99, lam=0.97
         advantages: Tensor of advantages [A_0, A_1, ..., A_{T-1}]
         returns: Tensor of returns-to-go [G_0, G_1, ..., G_{T-1}]
     """
-    # Convert to tensors if needed
+    # Convert to tensors if needed and determine device
     if isinstance(rewards, list):
         rewards = torch.tensor(rewards, dtype=torch.float32)
     if isinstance(values, list):
@@ -32,9 +32,12 @@ def compute_gae_lambda(rewards, values, next_values, dones, gamma=0.99, lam=0.97
         next_values = torch.tensor(next_values, dtype=torch.float32)
     if isinstance(dones, list):
         dones = torch.tensor(dones, dtype=torch.float32)
-    
+
+    # Determine device from input tensors (assume all tensors are on same device)
+    device = rewards.device
+
     T = len(rewards)
-    advantages = torch.zeros(T, dtype=torch.float32)
+    advantages = torch.zeros(T, dtype=torch.float32, device=device)
     gae = 0
     
     # Compute GAE backwards from the end of the trajectory
@@ -51,6 +54,9 @@ def compute_gae_lambda(rewards, values, next_values, dones, gamma=0.99, lam=0.97
         advantages[t] = gae
     
     # Compute returns = advantages + values
+    # A_t = G_t - V(s)
+    # G_t = A_t + V(s)
+    # Q(s,a) = G_t
     returns = advantages + values
     
     return advantages, returns
@@ -98,10 +104,11 @@ def compute_returns(rewards, discount_factor=0.99):
     for reward in reversed(rewards):
         G = discount_factor * G + reward
         returns.insert(0, G) # Insert at the beginning of the list so the first return will be at the last index by the end
-    return torch.tensor(returns)
+    return torch.tensor(returns, dtype=torch.float32)
 
 
 def compute_advantages(returns, values, discount_factor=0.99):
     # Advantage A(s,a) = G_t - V(s)
+    # High variance - used in REINFORCE algorithm
     advantages = returns - values
     return advantages
