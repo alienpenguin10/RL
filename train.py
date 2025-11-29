@@ -143,10 +143,10 @@ if __name__ == "__main__":
     os.makedirs("./models", exist_ok=True)
     
     # print("\n--- Testing REINFORCE for 5000 episodes ---")
-    #train(algo="reinforce", max_episodes=5000)
+    train(algo="reinforce", max_episodes=5000)
 
     # print("--- Testing VPG for 3000 episodes ---")
     #train(algo="vpg", max_episodes=3000)
         
     # print("\n--- Testing PPO for 3000 episodes ---")
-    train(algo="reinforce", max_episodes=200)
+    # train(algo="reinforce", max_episodes=200)

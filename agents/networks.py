@@ -146,7 +146,7 @@ class ValueNetwork(nn.Module):
 
     def forward(self, x):
         x = self.convnet(x)
-        x = x.view(x.size(0), -1)  # Flatten
+        x = x.reshape(x.size(0), -1)  # Flatten
         x = torch.relu(self.fc1(x))
         x = torch.relu(self.fc2(x))
         return self.fc3(x).squeeze(-1)  # Flatten to (batch,)
