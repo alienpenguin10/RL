@@ -10,19 +10,9 @@ import torch.nn as nn
 class PolicyNetwork(nn.Module):
     def __init__(self):
         super().__init__()
-        """
-        CNN for processing 96*96*3 RGB images (CarRacing-v3)
-        Convolutional layer 1: 32 filters, 8*8 kernel, stride 4, ReLU
-        Convolutional layer 2: 64 filters, 4*4 kernel, stride 2, ReLU
-        Convolutional layer 3: 64 filters, 3*3 kernel, stride 1, ReLU
-        """
-        # CNN for processing 96*96*3 RGB images
-        self.conv1 = nn.Conv2d(in_channels=3, out_channels=32, kernel_size=8, stride=4)
-        self.conv2 = nn.Conv2d(in_channels=32, out_channels=64, kernel_size=4, stride=2)
-        self.conv3 = nn.Conv2d(in_channels=64, out_channels=64, kernel_size=3, stride=1)
-
-        # Calculate CNN output size: 96 -> 23 -> 10 -> 8 = 8x8x64 = 4096
-        self.fc1 = nn.Linear(64 * 8 * 8, 512)
+        self.convnet = ConvNet()
+        # ConvNet output: 256 channels * 4 * 4 spatial = 4096
+        self.fc1 = nn.Linear(256 * 4 * 4, 512)
         self.fc2 = nn.Linear(512, 64)
         
         # Separate heads for different action types (steering, gas, brake)
@@ -51,9 +41,7 @@ class PolicyNetwork(nn.Module):
         x = x.float() / 255.0
 
         # CNN processing
-        x = torch.relu(self.conv1(x))
-        x = torch.relu(self.conv2(x))
-        x = torch.relu(self.conv3(x))
+        x = self.convnet(x)
         x = x.reshape(x.size(0), -1)  # Flatten, prev .view() didn't work, errored saying the data is contiguous
         x = torch.relu(self.fc1(x))
         x = torch.relu(self.fc2(x))
@@ -150,20 +138,39 @@ class PolicyNetwork(nn.Module):
 class ValueNetwork(nn.Module):
     def __init__(self):
         super().__init__()
-        # Same architecture as PolicyNetwork, but with a single output for state value V(s)
-        self.conv1 = nn.Conv2d(in_channels=3, out_channels=32, kernel_size=8, stride=4)
-        self.conv2 = nn.Conv2d(in_channels=32, out_channels=64, kernel_size=4, stride=2)
-        self.conv3 = nn.Conv2d(in_channels=64, out_channels=64, kernel_size=3, stride=1)
-        self.fc1 = nn.Linear(64 * 8 * 8, 512)
+        self.convnet = ConvNet()
+        # ConvNet output: 256 channels * 4 * 4 spatial = 4096
+        self.fc1 = nn.Linear(256 * 4 * 4, 512)
         self.fc2 = nn.Linear(512, 64)
         self.fc3 = nn.Linear(64, 1)
 
     def forward(self, x):
-        x = x.float() / 255.0
-        x = torch.relu(self.conv1(x))
-        x = torch.relu(self.conv2(x))
-        x = torch.relu(self.conv3(x))
+        x = self.convnet(x)
         x = x.reshape(x.size(0), -1)  # Flatten
         x = torch.relu(self.fc1(x))
         x = torch.relu(self.fc2(x))
         return self.fc3(x).squeeze(-1)  # Flatten to (batch,)
+
+class ConvNet(nn.Module):
+    def __init__(self):
+        super().__init__()
+        # CNN for processing 96*96*3 RGB images
+        # Receptive field on final layer = 88 x 88 pixels
+
+        # 96 -> 24 -> 12 -> 10 -> 8 -> 6 -> 4
+        # channels: 3 -> 16 -> 32 -> 64 -> 128 -> 256
+        self.conv1 = nn.Conv2d(in_channels=3, out_channels=16, kernel_size=7, stride=4, padding=2)
+        self.pool1 = nn.MaxPool2d(kernel_size=2, stride=2)
+        self.conv2 = nn.Conv2d(in_channels=16, out_channels=32, kernel_size=5, stride=1, padding=1)
+        self.conv3 = nn.Conv2d(in_channels=32, out_channels=64, kernel_size=3, stride=1)
+        self.conv4 = nn.Conv2d(in_channels=64, out_channels=128, kernel_size=3, stride=1)
+        self.conv5 = nn.Conv2d(in_channels=128, out_channels=256, kernel_size=3, stride=1)
+
+    def forward(self, x):
+        x = x.float() / 255.0 # Normalize pixel values to [0, 1]
+        x = torch.relu(self.conv1(x))
+        x = self.pool1(x)
+        x = torch.relu(self.conv2(x))
+        x = torch.relu(self.conv3(x))
+        x = torch.relu(self.conv4(x))
+        x = torch.relu(self.conv5(x))
