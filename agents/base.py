@@ -33,7 +33,7 @@ class BaseAgent:
         # Pytorch expects CHW format but state is HWC, so we need to permute the dimensions
         if isinstance(state, np.ndarray):
             state = torch.FloatTensor(state).permute(2,0,1).unsqueeze(0)
-        return state #.to(self.device) # Crucial: Move to GPU
+        return state.to(self.device) # Crucial: Move to GPU
 
     def save_model(self, filepath):
         """
