@@ -17,13 +17,9 @@ except ImportError:
     print("wandb not available - training will continue without logging")
 
 # Load environment variables from .env file
-try:
-    from dotenv import load_dotenv
-    load_dotenv()
-except ImportError:
-    print("ERROR: python-dotenv is required but not installed.")
-    print("Please install it with: pip install python-dotenv")
-    sys.exit(1)
+from dotenv import load_dotenv
+load_dotenv()
+
 
 def train(env_name="CarRacing-v3", algo="vpg", max_episodes=1000):
     # Initialize WandB if available
@@ -41,14 +37,9 @@ def train(env_name="CarRacing-v3", algo="vpg", max_episodes=1000):
     
     # Create environment
     # Note: render_mode=None for training speed
-    try:
-        env = gym.make(env_name, continuous=True, render_mode=None)
-    except gym.error.Error as e:
-        # Fallback or helpful error if environment not found
-        print(f"Environment {env_name} not found or error creating it: {e}")
-        print("Make sure gymnasium[box2d] is installed.")
-        return
-    
+
+    env = gym.make(env_name, continuous=True, render_mode=None)
+  
     if algo == "reinforce":
         agent = REINFORCEAgent(learning_rate=0.001)
     elif algo == "vpg":
@@ -105,7 +96,7 @@ def train(env_name="CarRacing-v3", algo="vpg", max_episodes=1000):
             steps += 1
             # Safety break for very long episodes during testing
             if steps > 200 and max_episodes < 10:
-                 done = True
+                done = True
             
         # Update at end of episode (REINFORCE) or end of batch (VPG - here treating episode as batch)
         loss = agent.update()
@@ -120,10 +111,7 @@ def train(env_name="CarRacing-v3", algo="vpg", max_episodes=1000):
         # Handle tuple return from VPG update
         if isinstance(loss, tuple):
             policy_loss, vf_loss, info = loss
-            log_dict.update({
-                "policy_loss": policy_loss,
-                "value_function_loss": vf_loss,
-            })
+            log_dict.update({"policy_loss": policy_loss,"value_function_loss": vf_loss,})
             print(f"Episode {episode} | Reward: {episode_reward:.2f} | Policy Loss: {policy_loss:.4f} | VF Loss: {vf_loss:.4f}")
         else:
             log_dict["loss"] = loss
@@ -149,19 +137,16 @@ if __name__ == "__main__":
     if WANDB_AVAILABLE:
         wandb_api_key = os.getenv("WANDB_API_KEY")
         if not wandb_api_key:
-            print("ERROR: WANDB_API_KEY is not set.")
-            print("Please create a .env file with your WandB API key.")
-            print("See README.md for setup instructions.")
-            sys.exit(1)
+            raise ValueError("WANDB_API_KEY is not set in the environment variables. Please create a .env file with your WandB API key. See README.md for setup instructions.")
     
     # Ensure models directory exists
     os.makedirs("./models", exist_ok=True)
     
     # print("\n--- Testing REINFORCE for 5000 episodes ---")
-    # train(algo="reinforce", max_episodes=5000
+    train(algo="reinforce", max_episodes=5000)
 
     # print("--- Testing VPG for 3000 episodes ---")
-    # train(algo="vpg", max_episodes=3000)
+    #train(algo="vpg", max_episodes=3000)
         
-    print("\n--- Testing PPO for 3000 episodes ---")
-    train(algo="reinforce", max_episodes=200)
+    # print("\n--- Testing PPO for 3000 episodes ---")
+    # train(algo="reinforce", max_episodes=200)
