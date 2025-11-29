@@ -19,7 +19,7 @@ class BaseAgent:
         self.values = []
         self.dones = []  # Added 'dones' which is needed for VPG/PPO
 
-    def store_transition(self, state, action, reward, log_prob, done, value=None):
+    def store_transition(self, state, action, reward, next_state, log_prob, done, value=None):
         # Standardized signature
         self.states.append(state)
         self.actions.append(action)
