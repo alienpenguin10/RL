@@ -1,9 +1,8 @@
 import gymnasium as gym
-import numpy as np
 from agents.reinforce import REINFORCEAgent
 from agents.vpg import VPGAgent
 from agents.ppo import PPOAgent
-import torch
+from agents.sac import SACAgent
 import os
 import signal
 import sys
@@ -46,6 +45,8 @@ def train(env_name="CarRacing-v3", algo="vpg", max_episodes=1000):
         agent = VPGAgent(learning_rate=0.0003)
     elif algo == "ppo":
         agent = PPOAgent(learning_rate=0.0003, clip_ratio=0.2)
+    elif algo == "sac":
+        agent = SACAgent()
     else:
         raise ValueError(f"Unknown algorithm: {algo}")
         
@@ -89,7 +90,7 @@ def train(env_name="CarRacing-v3", algo="vpg", max_episodes=1000):
             
             # Store transition
             # Ensure we pass all required arguments
-            agent.store_transition(state, action, reward, log_prob, done, value)
+            agent.store_transition(state, action, reward, next_state, log_prob, done, value)
             
             state = next_state
             episode_reward += reward
@@ -143,10 +144,13 @@ if __name__ == "__main__":
     os.makedirs("./models", exist_ok=True)
     
     # print("\n--- Testing REINFORCE for 5000 episodes ---")
-    train(algo="reinforce", max_episodes=5000)
+    # train(algo="reinforce", max_episodes=5000)
 
     # print("--- Testing VPG for 3000 episodes ---")
     #train(algo="vpg", max_episodes=3000)
         
     # print("\n--- Testing PPO for 3000 episodes ---")
     # train(algo="reinforce", max_episodes=200)
+
+    print("\n--- Testing SAC for 100 episodes ---")
+    train(algo="sac", max_episodes=100)

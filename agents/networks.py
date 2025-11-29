@@ -151,6 +151,26 @@ class ValueNetwork(nn.Module):
         x = torch.relu(self.fc2(x))
         return self.fc3(x).squeeze(-1)  # Flatten to (batch,)
 
+class QNetwork(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.convnet = ConvNet()
+
+        self.fc1 = nn.Linear(256 * 4 * 4 + 3, 512)
+        self.fc2 = nn.Linear(512, 64)
+        self.fc3 = nn.Linear(64, 1)
+
+    def forward(self, state, action):
+        x = self.convnet(state)
+        x = x.reshape(x.size(0), -1)
+
+        x = torch.cat([x, action], dim=1)
+
+        x = torch.relu(self.fc1(x))
+        x = torch.relu(self.fc2(x))
+        x = self.fc3(x)
+        return x
+
 class ConvNet(nn.Module):
     def __init__(self):
         super().__init__()
@@ -174,3 +194,5 @@ class ConvNet(nn.Module):
         x = torch.relu(self.conv3(x))
         x = torch.relu(self.conv4(x))
         x = torch.relu(self.conv5(x))
+
+        return x
