@@ -158,9 +158,9 @@ class ConvNet(nn.Module):
 
         # 96 -> 24 -> 12 -> 10 -> 8 -> 6 -> 4
         # channels: 3 -> 16 -> 32 -> 64 -> 128 -> 256
-        self.conv1 = nn.Conv2d(in_channels=3, out_channels=16, kernel_size=7, stride=4)
+        self.conv1 = nn.Conv2d(in_channels=3, out_channels=16, kernel_size=7, stride=4, padding=2)
         self.pool1 = nn.MaxPool2d(kernel_size=2, stride=2)
-        self.conv2 = nn.Conv2d(in_channels=16, out_channels=32, kernel_size=5, stride=1)
+        self.conv2 = nn.Conv2d(in_channels=16, out_channels=32, kernel_size=5, stride=1, padding=1)
         self.conv3 = nn.Conv2d(in_channels=32, out_channels=64, kernel_size=3, stride=1)
         self.conv4 = nn.Conv2d(in_channels=64, out_channels=128, kernel_size=3, stride=1)
         self.conv5 = nn.Conv2d(in_channels=128, out_channels=256, kernel_size=3, stride=1)
