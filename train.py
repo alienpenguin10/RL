@@ -37,7 +37,8 @@ def train(env_name="CarRacing-v3", algo="vpg", max_episodes=1000):
     # Create environment
     # Note: render_mode=None for training speed
 
-    env = gym.make(env_name, continuous=True, render_mode=None)
+    env = gym.make(env_name, continuous=True, render_mode="human")
+    action_dim = env.action_space.shape[0]
   
     if algo == "reinforce":
         agent = REINFORCEAgent(learning_rate=0.001)
@@ -46,7 +47,7 @@ def train(env_name="CarRacing-v3", algo="vpg", max_episodes=1000):
     elif algo == "ppo":
         agent = PPOAgent(learning_rate=0.0003, clip_ratio=0.2)
     elif algo == "sac":
-        agent = SACAgent()
+        agent = SACAgent(action_dim=action_dim)
     else:
         raise ValueError(f"Unknown algorithm: {algo}")
         
