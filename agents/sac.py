@@ -6,6 +6,7 @@ from agents.replay_buffer import ReplayBuffer
 
 
 class SACAgent(BaseAgent):
+    # class level - shared by all instances (add to __init__ for per-agent buffers)
     replay_buffer = ReplayBuffer(capacity=100000)
 
     def __init__(self, batch_size=256, warmup_factor=4.0, policy_lr=3e-4, q_lr=3e-4, policy_weight_decay=1e-4,
@@ -18,10 +19,12 @@ class SACAgent(BaseAgent):
         self.batch_size = batch_size
         self.warmup_factor = warmup_factor
 
+        # ACTOR
         self.policy_network = PolicyNetwork().to(self.device)
         self.policy_optimiser = torch.optim.Adam(self.policy_network.parameters(), lr=policy_lr,
                                                  weight_decay=policy_weight_decay)
 
+        # 2 CRITICS
         self.q_net_1 = QNetwork().to(self.device)
         self.q_net_1_target = QNetwork().to(self.device)
         self.q_optim_1 = torch.optim.Adam(self.q_net_1.parameters(), lr=q_lr,
@@ -33,17 +36,20 @@ class SACAgent(BaseAgent):
                                           weight_decay=q_weight_decay)
 
     def clear_memory(self):
+        """Resets the replay buffer by creating a new instance, discarding old transitions"""
         self.replay_buffer = ReplayBuffer(capacity=100000)
 
     def select_action(self, state):
         state_tensor = self.preprocess_state(state)
-        action, log_prob = self.policy_network.step(state_tensor)
+        action, log_prob = self.policy_network.step(state_tensor)   # Sample action and get log-prob 
         return action.squeeze(0).cpu().numpy(), log_prob, None
 
     def store_transition(self, state, action, reward, next_state, log_prob, done, value=None):
+        """Store Experience in replay buffer"""
         self.replay_buffer.push(state, action, reward, next_state, done)
 
     def update(self):
+        # If not enough samples in buffer, skip update
         if len(self.replay_buffer) < self.batch_size:
             return
 
@@ -59,9 +65,9 @@ class SACAgent(BaseAgent):
             next_actions, next_log_probs = self.policy_network(next_states)
             q1_next = self.q_net_1(next_states, next_actions)
             q2_next = self.q_net_2(next_states, next_actions)
-            q_next = torch.min(q1_next, q2_next) - self.alpha * next_log_probs
+            q_next = torch.min(q1_next, q2_next) - self.alpha * next_log_probs  # SAC Target = value - entropy
 
-            q_target = rewards + self.gamma * (1 - dones) * q_next
+            q_target = rewards + self.gamma * (1 - dones) * q_next  # Bellman target
 
         q_1_loss = ((self.q_net_1(states, actions) - q_target) ** 2).mean()
         q_2_loss = ((self.q_net_2(states, actions) - q_target) ** 2).mean()
@@ -74,11 +80,13 @@ class SACAgent(BaseAgent):
         q_2_loss.backward()
         self.q_optim_2.step()
 
+        # Policy Update
         new_actions, log_probs = self.policy_network(states)
         q1_new = self.q_net_1(states, new_actions)
         q2_new = self.q_net_2(states, new_actions)
         q_new = torch.min(q1_new, q2_new)
 
+        # Objective for the actor
         policy_loss = (self.alpha * log_probs - q_new).mean()
         self.policy_optimiser.zero_grad()
         policy_loss.backward()
