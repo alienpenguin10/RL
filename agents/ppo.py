@@ -80,7 +80,8 @@ class PPOAgent(BaseAgent):
         
         # # Useful extra info (Approximate KL Divergence for early stopping)
         # http://joschu.net/blog/kl-approx.html
-        approx_kl = (log_probs - log_probs_old).pow(2).mean()
+        # approx_kl = (log_probs - log_probs_old).pow(2).mean()
+        approx_kl = -1
 
         return loss_pi, approx_kl, entropy
 
@@ -112,8 +113,8 @@ class PPOAgent(BaseAgent):
                 torch.nn.utils.clip_grad_norm_(self.policy_network.parameters(), max_norm=0.5)
                 self.policy_optimizer.step()
                 
-                if approx_kl > 1.5 * self.target_k1:
-                    print(f"Early stopping at iteration {_} due to KL={approx_kl:.4f}")
+                # if approx_kl > 1.5 * self.target_k1:
+                #     print(f"Early stopping at iteration {_} due to KL={approx_kl:.4f}")
 
 
         # Value Update

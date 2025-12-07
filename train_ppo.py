@@ -65,21 +65,24 @@ def train(env_name="CarRacing-v3", algo="vpg", max_episodes=1000):
     state, _ = env.reset()
     steps = 0
     max_steps = 1000000
-    episode = 0
-    episode_reward = 0
-    episode_steps = 0
 
     while steps < max_steps:
+        episode = 0
+        episode_steps = 0
+        episode_reward = 0
+        steps_in_episode = []
+        episode_rewards = []
+
         for t in range(buffer_size):
             action, log_prob, val = agent.select_action(state)
             next_state, reward, terminated, truncated, _ = env.step(action)
             done = terminated or truncated
 
-            agent.store_transition(state, action, reward, val, log_prob, done)
+            agent.store_transition(state, action, reward, log_prob, done, val)
             state = next_state
             steps += 1
-            episode_reward += reward
             episode_steps += 1
+            episode_reward += reward
 
             # Handle episode termination
             if done:
@@ -87,9 +90,14 @@ def train(env_name="CarRacing-v3", algo="vpg", max_episodes=1000):
                 agent.finish_path(last_val=0)
                 episode += 1
                 current_episode[0] = episode
+
+                # Log episode reward
+                steps_in_episode.append(episode_steps)
+                episode_rewards.append(episode_reward)
+
                 # Reset for next episode
-                episode_reward = 0
                 episode_steps = 0
+                episode_reward = 0
                 state, _ = env.reset()
             elif t == buffer_size - 1:
                 # Buffer is full but episode not done: Bootstrap!
@@ -100,12 +108,17 @@ def train(env_name="CarRacing-v3", algo="vpg", max_episodes=1000):
 
         # 2. Update after buffer is full
         loss = agent.update()
-
         policy_loss, vf_loss = loss
+
+        avg_episode_steps = np.mean(steps_in_episode) if len(steps_in_episode) > 0 else 0
+        avg_episode_reward = np.mean(episode_rewards) if len(episode_rewards) > 0 else 0
+
         log_dict = {
             "policy_loss": policy_loss,
             "value_function_loss": vf_loss,
             "total_steps": steps,
+            "average_episode_steps": avg_episode_steps,
+            "average_episode_reward": avg_episode_reward,
             "episode": episode,
         }
         print(f"Update at step {steps} | Policy Loss: {policy_loss:.4f} | VF Loss: {vf_loss:.4f}")

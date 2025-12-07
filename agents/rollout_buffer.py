@@ -10,7 +10,7 @@ class RolloutBuffer:
         self.lam = lam
 
         # Pre-allocate memory for the buffer
-        self.state = torch.zeros((buffer_size, *state_dim), device=device)
+        self.states = torch.zeros((buffer_size, *state_dim), device=device)
         self.actions = torch.zeros((buffer_size, action_dim), device=device)
         self.log_probs = torch.zeros((buffer_size, 1), device=device)
         self.rewards = torch.zeros((buffer_size, 1), device=device)
@@ -23,7 +23,7 @@ class RolloutBuffer:
     def store(self, state, action, log_prob, reward, done, value):
         if self.ptr >= self.buffer_size:
             raise IndexError("RolloutBuffer is full. Call finish_path and get() before storing more.")
-        self.state[self.ptr] = state
+        self.states[self.ptr] = state
         self.actions[self.ptr] = torch.as_tensor(action, device=self.device)
         self.log_probs[self.ptr] = log_prob
         self.rewards[self.ptr] = reward
@@ -90,7 +90,7 @@ class RolloutBuffer:
         self.advantages = (self.advantages - adv_mean) / (adv_std + 1e-8)
         
         data = dict(
-            states=self.state,
+            states=self.states,
             actions=self.actions,
             returns=self.returns,
             advantages=self.advantages,
