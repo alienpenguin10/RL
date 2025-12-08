@@ -112,12 +112,6 @@ def train(env_name="CarRacing-v3", algo="vpg", max_episodes=1000):
         
         # Handle tuple return from VPG update
         if algo == "sac" and isinstance(loss, tuple):
-
-            if episode % 20 == 0:
-                print("Force clearing replay buffer to break staleness.")
-                agent.clear_memory()
-
-
             policy_loss, q_loss, info = loss
             log_dict.update({"policy_loss": policy_loss, "q_loss": q_loss, "alpha": info.get("alpha", None)})
             print(f"Episode {episode} | Reward: {episode_reward:.2f} | Policy Loss: {policy_loss:.4f} | Q Loss: {q_loss:.4f} | Alpha: {info.get('alpha', None)}")

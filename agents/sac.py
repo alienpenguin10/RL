@@ -54,7 +54,7 @@ class SACAgent(BaseAgent):
 
     def select_action(self, state):
         state_tensor = self.preprocess_state(state)
-        action, log_prob = self.policy_network.step(state_tensor)   # Sample action and get log-prob 
+        action, log_prob = self.policy_network.step_new(state_tensor)   # Sample action and get log-prob 
         return action.squeeze(0).cpu().numpy(), log_prob, None
 
     def store_transition(self, state, action, reward, next_state, log_prob, done, value=None):
