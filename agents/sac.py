@@ -7,7 +7,7 @@ from agents.replay_buffer import ReplayBuffer
 
 class SACAgent(BaseAgent):
     # class level - shared by all instances (add to __init__ for per-agent buffers)
-    replay_buffer = ReplayBuffer(capacity=100000)
+    replay_buffer = ReplayBuffer(capacity=10000)
 
     def __init__(self, action_dim, batch_size=256, warmup_factor=4.0,
                  policy_lr=3e-4, q_lr=3e-4, policy_weight_decay=1e-4,
@@ -44,6 +44,9 @@ class SACAgent(BaseAgent):
         self.q_net_2_target = QNetwork().to(self.device)
         self.q_optim_2 = torch.optim.Adam(self.q_net_2.parameters(), lr=q_lr,
                                           weight_decay=q_weight_decay)
+        
+        self.q_net_1_target.load_state_dict(self.q_net_1.state_dict())
+        self.q_net_2_target.load_state_dict(self.q_net_2.state_dict())
 
     def clear_memory(self):
         """Resets the replay buffer by creating a new instance, discarding old transitions"""
@@ -60,12 +63,23 @@ class SACAgent(BaseAgent):
 
     def update(self):
         # If not enough samples in buffer, skip update
-        if len(self.replay_buffer) < self.batch_size:
+        if len(self.replay_buffer) < self.batch_size * self.warmup_factor:
             return
+        
+        _, actions, _, _, _ = self.replay_buffer.sample(self.batch_size)
+        # # Compute mean action
+        # mean_action = actions.mean(dim=0)
+        # # Check if most actions are close to the mean action
+        # similarity = (abs(actions - mean_action).sum(dim=1) < 1e-3).float().mean()
+        # if similarity > 0.9:
+        #     print("Replay buffer is stale, clearing buffer!")
+        #     self.clear_memory()
+        #     return
 
         alpha = self.log_alpha.exp()
 
         states, actions, rewards, next_states, dones = self.replay_buffer.sample(self.batch_size)
+        # print("Sampled actions from buffer:", actions)
 
         states = torch.FloatTensor(states).to(self.device)
         actions = torch.FloatTensor(actions).to(self.device)
@@ -75,8 +89,8 @@ class SACAgent(BaseAgent):
 
         with torch.no_grad():
             next_actions, next_log_probs = self.policy_network(next_states)
-            q1_next = self.q_net_1(next_states, next_actions)
-            q2_next = self.q_net_2(next_states, next_actions)
+            q1_next = self.q_net_1_target(next_states, next_actions)
+            q2_next = self.q_net_2_target(next_states, next_actions)
             q_next = torch.min(q1_next, q2_next) - alpha * next_log_probs  # SAC Target = value - entropy
 
             q_target = rewards + self.gamma * (1 - dones) * q_next  # Bellman target

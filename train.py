@@ -37,7 +37,7 @@ def train(env_name="CarRacing-v3", algo="vpg", max_episodes=1000):
     # Create environment
     # Note: render_mode=None for training speed
 
-    env = gym.make(env_name, continuous=True, render_mode="human")
+    env = gym.make(env_name, continuous=True, render_mode=None)
     action_dim = env.action_space.shape[0]
   
     if algo == "reinforce":
@@ -111,14 +111,28 @@ def train(env_name="CarRacing-v3", algo="vpg", max_episodes=1000):
         }
         
         # Handle tuple return from VPG update
-        if isinstance(loss, tuple):
+        if algo == "sac" and isinstance(loss, tuple):
+
+            if episode % 20 == 0:
+                print("Force clearing replay buffer to break staleness.")
+                agent.clear_memory()
+
+
+            policy_loss, q_loss, info = loss
+            log_dict.update({"policy_loss": policy_loss, "q_loss": q_loss, "alpha": info.get("alpha", None)})
+            print(f"Episode {episode} | Reward: {episode_reward:.2f} | Policy Loss: {policy_loss:.4f} | Q Loss: {q_loss:.4f} | Alpha: {info.get('alpha', None)}")
+            if episode % 5 == 0:
+                print(f"Sample action at episode {episode}: {action}")
+        elif isinstance(loss, tuple):
             policy_loss, vf_loss, info = loss
             log_dict.update({"policy_loss": policy_loss,"value_function_loss": vf_loss,})
             print(f"Episode {episode} | Reward: {episode_reward:.2f} | Policy Loss: {policy_loss:.4f} | VF Loss: {vf_loss:.4f}")
         else:
             log_dict["loss"] = loss
-            print(f"Episode {episode} | Reward: {episode_reward:.2f} | Loss: {loss:.4f}")
-        
+            if loss is not None:
+                print(f"Episode {episode} | Reward: {episode_reward:.2f} | Loss: {loss:.4f}")
+            else:
+                print(f"Episode {episode} | Reward: {episode_reward:.2f} | Loss: None (buffer warming up)")
         if WANDB_AVAILABLE:
             wandb.log(log_dict)
         
