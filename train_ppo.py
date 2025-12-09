@@ -21,7 +21,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 
-def train(env_name="CarRacing-v3", algo="vpg", max_episodes=1000):
+def train(env_name="CarRacing-v3", algo="vpg", max_train_iters=1000):
     # Initialize WandB if available
     if WANDB_AVAILABLE:
         wandb.init(
@@ -30,7 +30,7 @@ def train(env_name="CarRacing-v3", algo="vpg", max_episodes=1000):
             config={
                 "algorithm": algo,
                 "environment": env_name,
-                "max_episodes": max_episodes,
+                "max_episodes": max_train_iters,
                 "learning_rate": 0.001 if algo == "reinforce" else 0.0003,
             }
         )
@@ -42,7 +42,8 @@ def train(env_name="CarRacing-v3", algo="vpg", max_episodes=1000):
   
     # Buffer size: how many steps to collect before each update
     buffer_size = 2048  # Standard PPO uses 2048
-    agent = PPOAgent(learning_rate=0.0003, clip_ratio=0.2, buffer_size=buffer_size)
+    batch_size = 64   # Mini-batch size for updates (smaller batch sizes often generalise better)
+    agent = PPOAgent(learning_rate=0.0003, clip_ratio=0.2, mini_batch_size=batch_size, buffer_size=buffer_size)
     
         
     print(f"Training {algo} on {env_name} using device: {agent.device}")
@@ -64,7 +65,7 @@ def train(env_name="CarRacing-v3", algo="vpg", max_episodes=1000):
     signal.signal(signal.SIGINT, save_on_interrupt)
     state, _ = env.reset()
     steps = 0
-    max_steps = 1000000
+    max_steps = max_train_iters
 
     while steps < max_steps:
         episode = 0
@@ -121,7 +122,7 @@ def train(env_name="CarRacing-v3", algo="vpg", max_episodes=1000):
             "average_episode_reward": avg_episode_reward,
             "episode": episode,
         }
-        print(f"Update at step {steps} | Policy Loss: {policy_loss:.4f} | VF Loss: {vf_loss:.4f}")
+        # print(f"Update at step {steps} | Policy Loss: {policy_loss:.4f} | VF Loss: {vf_loss:.4f}")
 
         if WANDB_AVAILABLE:
             wandb.log(log_dict)
@@ -154,4 +155,4 @@ if __name__ == "__main__":
     #train(algo="vpg", max_episodes=3000)
         
     # print("\n--- Testing PPO for 3000 episodes ---")
-    train(algo="ppo", max_episodes=200)
+    train(algo="ppo", max_train_iters=1000000)
