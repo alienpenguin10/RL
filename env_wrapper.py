@@ -55,10 +55,10 @@ class FrameStack(gym.ObservationWrapper):
         """
             Reset the environment and stack the initial frame
         """
-        obs = self.env.reset(**kwargs)[0]
+        obs, info = self.env.reset(**kwargs)
         for _ in range(self.queue_len):
             self.frames.append(obs)
-        return self.get_stacked_frames()
+        return self.get_stacked_frames(), info
     
     def get_stacked_frames(self):
         assert len(self.frames) == self.queue_len, "Not enough frames stacked"
