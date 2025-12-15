@@ -4,6 +4,10 @@ Same architecture as REINFORCE, adapted for VPG usage
 """
 import torch
 import torch.nn as nn
+from torch.distributions import Normal
+import numpy as np
+import torch.nn.functional as F
+
 
 # Remove global device check, handled in Agent
 
@@ -101,6 +105,42 @@ class PolicyNetwork(nn.Module):
         # action:(batch_size, 3) = [[steering, gas, brake]]
         # log_prob:(batch_size,) = [total_log_prob]
         return action, log_prob
+    
+    def step_new(self, state):
+        """SAC action sampling with tanh squashing and log-prob correction"""
+        # Forward pass
+        mu, logstd = self.forward(state)
+        std = logstd.exp()
+        
+        # Create distribution and sample with reparameterization
+        dist = Normal(mu, std)
+        actions = dist.rsample()  # Reparameterization trick for gradients
+        batch_size = actions.shape[0]
+        
+        # Log probability before squashing
+        log_prob = dist.log_prob(actions).sum(dim=-1)
+        
+        # Apply tanh squashing
+        squashed = torch.tanh(actions)
+        
+        # Log-prob correction for tanh squashing (more stable formula)
+        # Corrects for the change of variables: log π(a) = log μ(u) - log|da/du|
+        log_prob_correction = torch.log(1 - squashed.pow(2) + 1e-6).sum(dim=1)
+        log_prob = log_prob - log_prob_correction
+        
+        # Scale actions to environment ranges
+        steering_action = squashed[:, 0].view(batch_size, 1)  # [-1, 1]
+        gas_action = ((squashed[:, 1] + 1) / 2).view(batch_size, 1)  # [0, 1]
+        brake_action = ((squashed[:, 2] + 1) / 2).view(batch_size, 1)  # [0, 1]
+        
+        # Clamp brake to valid range
+        brake_action = torch.clamp(brake_action, 0.0, 1.0)
+        
+        # Concatenate final action
+        action = torch.cat((steering_action, gas_action, brake_action), dim=1)
+        
+        return action, log_prob
+
 
     def act(self, state):
         with torch.no_grad():
