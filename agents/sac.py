@@ -3,22 +3,29 @@ import torch
 from agents.base import BaseAgent
 from agents.networks import PolicyNetwork, QNetwork
 from agents.replay_buffer import ReplayBuffer
+import pickle
 
 
 class SACAgent(BaseAgent):
     # class level - shared by all instances (add to __init__ for per-agent buffers)
-    replay_buffer = ReplayBuffer(capacity=10000)
+    # replay_buffer = ReplayBuffer(capacity=10000)
 
     def __init__(self, action_dim, batch_size=256, warmup_factor=4.0,
-                 policy_lr=3e-4, q_lr=3e-4, policy_weight_decay=1e-4,
-                 q_weight_decay=1e-4, gamma=0.99, tau=0.005, alpha=0.2):
+             policy_lr=3e-4, q_lr=3e-4, policy_weight_decay=1e-4,
+             q_weight_decay=1e-4, gamma=0.99, tau=0.05, alpha=0.1,
+             actor_update_frequency=2):
         super().__init__(learning_rate=policy_lr, gamma=gamma)
+
+        self.replay_buffer = ReplayBuffer(capacity=10000)
 
         self.tau = tau
         self.alpha = alpha
 
         self.batch_size = batch_size
         self.warmup_factor = warmup_factor
+
+        self.actor_update_frequency = actor_update_frequency
+        self.update_counter = 0  # Track update iterations
 
         # entropy target based on action_dim (CarRacing: action_dim = 3 -> target_entropy = -3)
         self.target_entropy = -float(action_dim)
@@ -48,14 +55,25 @@ class SACAgent(BaseAgent):
         self.q_net_1_target.load_state_dict(self.q_net_1.state_dict())
         self.q_net_2_target.load_state_dict(self.q_net_2.state_dict())
 
+    
+    def save_replay_buffer(self, filepath):
+        with open(filepath, "wb") as f:
+            pickle.dump(self.replay_buffer, f)
+
+    def load_replay_buffer(self, filepath):
+        with open(filepath, "rb") as f:
+            self.replay_buffer = pickle.load(f)
+            print("Replay buffer size after loading:", len(self.replay_buffer))
+    
+    
     def clear_memory(self):
         """Resets the replay buffer by creating a new instance, discarding old transitions"""
-        self.replay_buffer = ReplayBuffer(capacity=100000)
+        self.replay_buffer = ReplayBuffer(capacity=1000000)
 
     def select_action(self, state):
         state_tensor = self.preprocess_state(state)
         action, log_prob = self.policy_network.step_new(state_tensor)   # Sample action and get log-prob 
-        return action.squeeze(0).cpu().numpy(), log_prob, None
+        return action.squeeze(0).cpu().detach().numpy(), log_prob.detach()
 
     def store_transition(self, state, action, reward, next_state, log_prob, done, value=None):
         """Store Experience in replay buffer"""
@@ -64,22 +82,12 @@ class SACAgent(BaseAgent):
     def update(self):
         # If not enough samples in buffer, skip update
         if len(self.replay_buffer) < self.batch_size * self.warmup_factor:
-            return
-        
-        _, actions, _, _, _ = self.replay_buffer.sample(self.batch_size)
-        # # Compute mean action
-        # mean_action = actions.mean(dim=0)
-        # # Check if most actions are close to the mean action
-        # similarity = (abs(actions - mean_action).sum(dim=1) < 1e-3).float().mean()
-        # if similarity > 0.9:
-        #     print("Replay buffer is stale, clearing buffer!")
-        #     self.clear_memory()
-        #     return
+            return None
 
+        self.update_counter += 1
         alpha = self.log_alpha.exp()
 
         states, actions, rewards, next_states, dones = self.replay_buffer.sample(self.batch_size)
-        # print("Sampled actions from buffer:", actions)
 
         states = torch.FloatTensor(states).to(self.device)
         actions = torch.FloatTensor(actions).to(self.device)
@@ -87,54 +95,75 @@ class SACAgent(BaseAgent):
         next_states = torch.FloatTensor(next_states).to(self.device)
         dones = torch.FloatTensor(dones).unsqueeze(1).to(self.device)
 
+        # Q-value update (always)
         with torch.no_grad():
-            next_actions, next_log_probs = self.policy_network(next_states)
+            next_actions, next_log_probs = self.policy_network.step_new(next_states)
+            next_log_probs = next_log_probs.unsqueeze(1)
             q1_next = self.q_net_1_target(next_states, next_actions)
             q2_next = self.q_net_2_target(next_states, next_actions)
-            q_next = torch.min(q1_next, q2_next) - alpha * next_log_probs  # SAC Target = value - entropy
-
-            q_target = rewards + self.gamma * (1 - dones) * q_next  # Bellman target
+            q_next = torch.min(q1_next, q2_next) - alpha * next_log_probs
+            q_target = rewards + self.gamma * (1 - dones) * q_next
 
         q_1_loss = ((self.q_net_1(states, actions) - q_target) ** 2).mean()
         q_2_loss = ((self.q_net_2(states, actions) - q_target) ** 2).mean()
 
         self.q_optim_1.zero_grad()
         q_1_loss.backward()
+        torch.nn.utils.clip_grad_norm_(self.q_net_1.parameters(), max_norm=1.0)
         self.q_optim_1.step()
 
         self.q_optim_2.zero_grad()
         q_2_loss.backward()
+        torch.nn.utils.clip_grad_norm_(self.q_net_2.parameters(), max_norm=1.0)
         self.q_optim_2.step()
 
-        # Policy Update
-        new_actions, log_probs = self.policy_network(states)
-        q1_new = self.q_net_1(states, new_actions)
-        q2_new = self.q_net_2(states, new_actions)
-        q_new = torch.min(q1_new, q2_new)
+        # Policy and Alpha Update (less frequent)
+        if self.update_counter % self.actor_update_frequency == 0:
+            # Freeze critic parameters
+            for param in self.q_net_1.parameters():
+                param.requires_grad = False
+            for param in self.q_net_2.parameters():
+                param.requires_grad = False
 
-        # Objective for the actor
-        policy_loss = (alpha * log_probs - q_new).mean()
-        self.policy_optimiser.zero_grad()
-        policy_loss.backward()
-        self.policy_optimiser.step()
+            # Policy Update
+            new_actions, log_probs = self.policy_network.step_new(states)
+            log_probs = log_probs.unsqueeze(1)
+            q1_new = self.q_net_1(states, new_actions)
+            q2_new = self.q_net_2(states, new_actions)
+            q_new = torch.min(q1_new, q2_new)
 
-        # temperature (alpha) update: maximize entropy towards target_entropy
-        with torch.no_grad():
-            # detach log_probs so we don't backprop into policy again
-            entropy_term = -log_probs.detach()
+            policy_loss = (alpha * log_probs - q_new).mean()
+            self.policy_optimiser.zero_grad()
+            policy_loss.backward()
+            torch.nn.utils.clip_grad_norm_(self.policy_network.parameters(), max_norm=1.0)
+            self.policy_optimiser.step()
 
-        alpha_loss = (self.log_alpha * (entropy_term - self.target_entropy)).mean()
-        self.alpha_optim.zero_grad()
-        alpha_loss.backward()
-        self.alpha_optim.step()
+            # Alpha update
+            with torch.no_grad():
+                entropy_term = -log_probs.squeeze(1).detach()
 
-        # keep a scalar copy if you still want self.alpha
-        self.alpha = self.log_alpha.exp().item()
+            alpha_loss = (self.log_alpha * (entropy_term - self.target_entropy)).mean()
+            self.alpha_optim.zero_grad()
+            alpha_loss.backward()
+            self.alpha_optim.step()
 
+            self.alpha = self.log_alpha.exp().item()
+
+            # Unfreeze critic parameters
+            for param in self.q_net_1.parameters():
+                param.requires_grad = True
+            for param in self.q_net_2.parameters():
+                param.requires_grad = True
+        else:
+            # Return previous losses if no update
+            policy_loss = torch.tensor(0.0)
+            alpha_loss = torch.tensor(0.0)
+
+        # Soft update target networks (every step is fine)
         self._soft_update_networks(self.q_net_1, self.q_net_1_target)
         self._soft_update_networks(self.q_net_2, self.q_net_2_target)
 
-        return policy_loss.item(), (q_1_loss.item() + q_2_loss.item()) / 2, {"alpha": self.alpha, "alpha_loss": alpha_loss.item()}
+        return policy_loss.item(), (q_1_loss.item() + q_2_loss.item()) / 2, {"alpha": self.alpha, "alpha_loss": alpha_loss.item() if isinstance(alpha_loss, torch.Tensor) else alpha_loss}
 
     def _soft_update_networks(self, source, target):
         for target_param, param in zip(target.parameters(), source.parameters()):

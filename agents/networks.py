@@ -107,52 +107,40 @@ class PolicyNetwork(nn.Module):
         return action, log_prob
     
     def step_new(self, state):
-        # Sampling actions from gaussian
-        # mu, logstd = self.forward(state)
-        # pdf = Normal(mu, logstd.exp())
-        # actions = pdf.sample()
-        # batch_size = actions.shape[0]
-
-        # # Computing Log-Prob of actions
-        # # Refer line 53-58 from https://github.com/openai/spinningup/blob/master/spinup/algos/pytorch/sac/core.py
-        # log_prob_correction = (2 * (np.log(2) - actions - F.softplus(-2*actions))).sum(axis=1)
-        # log_prob = pdf.log_prob(actions).sum(axis=-1) - log_prob_correction
-
-        # # Setting actions to desired output-range
-        # # Gas and Brake actions aren't independent and has to handled differently (Dramatic improvement in training)
-        # # Brake is set to 0.1 if the tendency to accelerate is higher than to brake
-        # action = torch.tanh(actions)
-        # steering_action = action[:, 0].view(batch_size, 1)
-        # gas_action = ((action[:, 1] + 1) / 2).view(batch_size, 1)
-        # brake_action = 0.175 * ((action[:, 2] + 1) / 2).view(batch_size, 1)
-        # brake_action[gas_action > brake_action] = 0.1
-        # action = torch.cat((steering_action, gas_action, brake_action), dim=1)
-        # return action, log_prob
-
-
+        """SAC action sampling with tanh squashing and log-prob correction"""
+        # Forward pass
         mu, logstd = self.forward(state)
         std = logstd.exp()
+        
+        # Create distribution and sample with reparameterization
         dist = Normal(mu, std)
-
-        actions = dist.sample()
+        actions = dist.rsample()  # Reparameterization trick for gradients
         batch_size = actions.shape[0]
-
-        # Tanh squashing
+        
+        # Log probability before squashing
+        log_prob = dist.log_prob(actions).sum(dim=-1)
+        
+        # Apply tanh squashing
         squashed = torch.tanh(actions)
-
-        # Log-prob correction for tanh squashing
-        log_prob = dist.log_prob(actions).sum(dim=1)
-        log_prob -= torch.sum(torch.log(1 - squashed.pow(2) + 1e-6), dim=1)
-
+        
+        # Log-prob correction for tanh squashing (more stable formula)
+        # Corrects for the change of variables: log π(a) = log μ(u) - log|da/du|
+        log_prob_correction = torch.log(1 - squashed.pow(2) + 1e-6).sum(dim=1)
+        log_prob = log_prob - log_prob_correction
+        
         # Scale actions to environment ranges
-        steering = squashed[:, 0:1]                # [-1, 1]
-        gas = (squashed[:, 1:2] + 1) / 2           # [0, 1]
-        brake = (squashed[:, 2:3] + 1) / 2         # [0, 1]
-
-        # Concatenate final actions
-        action = torch.cat((steering, gas, brake), dim=1)
-
+        steering_action = squashed[:, 0].view(batch_size, 1)  # [-1, 1]
+        gas_action = ((squashed[:, 1] + 1) / 2).view(batch_size, 1)  # [0, 1]
+        brake_action = ((squashed[:, 2] + 1) / 2).view(batch_size, 1)  # [0, 1]
+        
+        # Clamp brake to valid range
+        brake_action = torch.clamp(brake_action, 0.0, 1.0)
+        
+        # Concatenate final action
+        action = torch.cat((steering_action, gas_action, brake_action), dim=1)
+        
         return action, log_prob
+
 
     def act(self, state):
         with torch.no_grad():
