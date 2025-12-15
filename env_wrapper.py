@@ -43,7 +43,7 @@ class FrameStack(gym.ObservationWrapper):
         assert isinstance(env.observation_space, Box), "Expected Box observation space"
         assert (len(env.observation_space.shape) == 2 or len(env.observation_space.shape) == 3,
                 "Expected grayscale frame observation space (H, W) or RGB frame observation space (H, W, C)")
-
+        # Input: (H, W, C) -> Output:(1, C, H, W)
         stacked_obs_shape = (num_frames, env.observation_space.shape[0], env.observation_space.shape[1])
         self.observation_space = Box(low=0, high=255, shape=stacked_obs_shape, dtype=np.uint8)
 
@@ -56,6 +56,8 @@ class FrameStack(gym.ObservationWrapper):
             Reset the environment and stack the initial frame
         """
         obs, info = self.env.reset(**kwargs)
+        # resets so that for the very first step, the history will look like [frame0, frame0, frame0, frame0]
+        # Then transitions to [frame0, frame0, frame0, frame1] after one step.
         for _ in range(self.queue_len):
             self.frames.append(obs)
         return self.get_stacked_frames(), info
@@ -68,3 +70,24 @@ class FrameStack(gym.ObservationWrapper):
         assert len(stacked_frames) == self.num_frames, f"Expected {self.num_frames} frames, got {len(stacked_frames)}"
         
         return np.stack(stacked_frames, axis=0)
+
+class ActionRemapWrapper(gym.ActionWrapper):
+    def __init__(self, env):
+        super().__init__(env)
+        # We tell the agent: "You have 3 actions, all between -1 and 1"
+        self.action_space = Box(low=-1, high=1, shape=(3,), dtype=np.float32)
+
+    def action(self, action):
+        # Map agent's [-1, 1] outputs to the environment's required format
+        
+        # Steering: [-1, 1] -> [-1, 1] (No change)
+        steer = action[0]
+        
+        # Gas: [-1, 1] -> [0, 1]
+        # We use (x + 1) / 2 so that an output of 0.0 (network init) becomes 0.5 (half gas)
+        gas = (action[1] + 1) / 2.0
+        
+        # Brake: [-1, 1] -> [0, 1]
+        brake = (action[2] + 1) / 2.0
+        
+        return np.array([steer, gas, brake], dtype=np.float32)

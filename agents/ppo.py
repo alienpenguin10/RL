@@ -16,7 +16,7 @@ import torch.optim as optim
 import os
 
 class PPOAgent(BaseAgent):
-    def __init__(self, learning_rate=0.0003, vf_lr=0.001, gamma=0.99, lam=0.97, clip_ratio=0.2, target_k1=0.01, train_pi_iters=10, train_v_iters=40, max_ep_len=1000):
+    def __init__(self, learning_rate=0.0003, vf_lr=0.001, gamma=0.99, lam=0.95, clip_ratio=0.2, target_k1=0.01, train_pi_iters=10, train_v_iters=10, max_ep_len=1000, entropy_coeff=0.01):
         super().__init__(learning_rate, gamma)
         self.vf_lr = vf_lr
         self.lam = lam
@@ -25,6 +25,7 @@ class PPOAgent(BaseAgent):
         self.train_pi_iters = train_pi_iters
         self.train_v_iters = train_v_iters
         self.max_ep_len = max_ep_len
+        self.entropy_coeff = entropy_coeff
 
         # Initialize networks and move to device
         self.policy_network = PolicyNetwork().to(self.device)
@@ -64,6 +65,10 @@ class PPOAgent(BaseAgent):
 
         # 4. Calculate PPO Loss (Maximize objective -> Minimize negative objective)
         loss_pi = -torch.min(surr1, surr2).mean()
+
+        # 5. Add Entropy Bonus
+        entropy_loss = -self.entropy_coeff * dist.entropy().mean()
+        loss_pi += entropy_loss
         
         # # Useful extra info (Approximate KL Divergence for early stopping)
         # http://joschu.net/blog/kl-approx.html
@@ -73,10 +78,9 @@ class PPOAgent(BaseAgent):
 
     def update(self):
         # convert list to tensor on Device
-        # states_tensor = torch.FloatTensor(np.array(self.states)).permute(0, 3, 1, 2).to(self.device)
-        # Stack the list of tensors directly
-        # squeeze(1) is needed because preprocess adds a batch dim of 1
-        states_tensor = torch.cat(self.states).squeeze(1).to(self.device)
+        # Input states are list of (C, H, W) numpy arrays
+        # np.array(self.states) -> (Batch, C, H, W)
+        states_tensor = torch.FloatTensor(np.array(self.states)).to(self.device)
         actions_tensor = torch.FloatTensor(self.actions).to(self.device)
         log_probs_old_tensor = torch.stack(self.log_probs).detach().to(self.device)
         rewards_tensor = torch.FloatTensor(self.rewards).to(self.device)
@@ -137,4 +141,3 @@ class PPOAgent(BaseAgent):
 
         self.clear_memory()
         return loss_pi.item(), vf_loss_avg/ self.train_v_iters, {"kl": approx_kl}
-        
