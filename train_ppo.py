@@ -1,3 +1,4 @@
+from env_wrapper import ActionRemapWrapper, FrameStack, ProcessedFrame
 import gymnasium as gym
 import numpy as np
 from agents.reinforce import REINFORCEAgent
@@ -39,11 +40,14 @@ def train(env_name="CarRacing-v3", algo="vpg", max_train_iters=1000):
     # Note: render_mode=None for training speed
 
     env = gym.make(env_name, continuous=True, render_mode=None)
+    env = ProcessedFrame(env)
+    env = ActionRemapWrapper(env)
+    env = FrameStack(env, num_frames=4, skip_frames=2)
   
     # Buffer size: how many steps to collect before each update
     buffer_size = 2048  # Standard PPO uses 2048
     batch_size = 64   # Mini-batch size for updates (smaller batch sizes often generalise better)
-    agent = PPOAgent(learning_rate=0.0003, clip_ratio=0.2, mini_batch_size=batch_size, buffer_size=buffer_size)
+    agent = PPOAgent(state_dim=(4, 84, 96), learning_rate=0.0003, clip_ratio=0.2, mini_batch_size=batch_size, buffer_size=buffer_size)
     
         
     print(f"Training {algo} on {env_name} using device: {agent.device}")
@@ -131,7 +135,7 @@ def train(env_name="CarRacing-v3", algo="vpg", max_train_iters=1000):
     
     # Save final model
     print(f"\nTraining complete! Saving final model...")
-    agent.save_model(f"./models/{algo}_{max_episodes-1}_final.pth")
+    agent.save_model(f"./models/{algo}_{max_train_iters-1}_final.pth")
     
     if WANDB_AVAILABLE:
         wandb.finish()
