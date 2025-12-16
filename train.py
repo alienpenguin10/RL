@@ -7,7 +7,8 @@ import os
 import signal
 import sys
 import numpy as np
-
+import time
+from gymnasium.wrappers import FrameStackObservation, GrayscaleObservation
 
 # Try to import wandb (optional)
 try:
@@ -22,7 +23,13 @@ from dotenv import load_dotenv
 load_dotenv()
 
 
-def train(env_name="CarRacing-v3", algo="vpg", max_episodes=1000):
+def train(env_name="CarRacing-v3", algo="vpg", max_episodes=1000, 
+          update_frequency=1, updates_per_step=1):
+    """
+    Args:
+        update_frequency: Update every N steps (e.g., 4 means update every 4 steps)
+        updates_per_step: How many gradient updates to perform when updating (default 1)
+    """
     # Initialize WandB if available
     if WANDB_AVAILABLE:
         wandb.init(
@@ -33,13 +40,15 @@ def train(env_name="CarRacing-v3", algo="vpg", max_episodes=1000):
                 "environment": env_name,
                 "max_episodes": max_episodes,
                 "learning_rate": 0.001 if algo == "reinforce" else 0.0003,
+                "update_frequency": update_frequency,
+                "updates_per_step": updates_per_step,
             }
         )
     
     # Create environment
-    # Note: render_mode=None for training speed
-
     env = gym.make(env_name, continuous=True, render_mode=None)
+    env = GrayscaleObservation(env, keep_dim=False)  # RGB -> Grayscale
+    env = FrameStackObservation(env, 4)
     action_dim = env.action_space.shape[0]
   
     if algo == "reinforce":
@@ -61,9 +70,11 @@ def train(env_name="CarRacing-v3", algo="vpg", max_episodes=1000):
         raise ValueError(f"Unknown algorithm: {algo}")
         
     print(f"Training {algo} on {env_name} using device: {agent.device}")
+    print(f"Update frequency: every {update_frequency} steps")
+    print(f"Updates per step: {updates_per_step}")
     
     # Track current episode for saving on interrupt
-    current_episode = [0]  # Use list to allow modification in nested function
+    current_episode = [0]
     
     def save_on_interrupt(signum, frame):
         """Save model when interrupted (Ctrl+C)"""
@@ -93,35 +104,53 @@ def train(env_name="CarRacing-v3", algo="vpg", max_episodes=1000):
     if algo == "sac" and buffer_loaded:
         start_policy = 0
     
-    random_exploration=True
+    random_exploration = True
     
     # Register signal handler for graceful shutdown
     signal.signal(signal.SIGINT, save_on_interrupt)
 
     total_steps = 0
-    UPDATE_EVERY = 50  # Update every 50 steps
-    UPDATES_PER_BATCH = 10  # Do 10 updates each time
-
+    
+    # SAC-specific tracking for logging
+    total_updates = 0
+    running_policy_loss = []
+    running_q_loss = []
+    running_alpha = []
+    
+    # Timing statistics
+    episode_times = []
+    update_times = []
+    env_step_times = []
     
     for episode in range(max_episodes):
+        episode_start_time = time.time()
         current_episode[0] = episode
         state, _ = env.reset()
         
         # Randomize starting position for SAC
-        # if algo == "sac":
-        #     position = np.random.randint(len(env.unwrapped.track))
-        #     from gymnasium.envs.box2d.car_dynamics import Car
-        #     env.unwrapped.car = Car(env.unwrapped.world, *env.unwrapped.track[position][1:4])
+        if algo == "sac":
+            position = np.random.randint(len(env.unwrapped.track))
+            from gymnasium.envs.box2d.car_dynamics import Car
+            env.unwrapped.car = Car(env.unwrapped.world, *env.unwrapped.track[position][1:4])
         
         episode_reward = 0
         done = False
         steps = 0
-        action = env.action_space.sample()  # Initialize action
-        loss = None  # Initialize loss to None
+        action = env.action_space.sample()
 
-        print(f"\n=== Starting Episode {episode} ===")
-        print(f"Buffer size: {len(agent.replay_buffer) if algo == 'sac' else 'N/A'}")
-        print(f"Total steps so far: {total_steps}")
+        print(f"\n=== Episode {episode} ===")
+        if episode % 10 == 0:  # Less verbose logging
+            print(f"Buffer size: {len(agent.replay_buffer) if algo == 'sac' else 'N/A'}")
+            print(f"Total steps: {total_steps}, Total updates: {total_updates if algo == 'sac' else 'N/A'}")
+            if episode_times:
+                print(f"Avg episode time: {np.mean(episode_times[-10:]):.2f}s")
+        
+        # Episode-specific tracking for SAC
+        episode_policy_losses = []
+        episode_q_losses = []
+        episode_alphas = []
+        episode_update_time = 0
+        episode_env_time = 0
         
         while not done:
             # Select action based on algorithm
@@ -146,15 +175,10 @@ def train(env_name="CarRacing-v3", algo="vpg", max_episodes=1000):
             else:  # VPG, PPO
                 action, log_prob, value = agent.select_action(state)
             
-            # Step environment
+            # Step environment (time this)
+            env_start = time.time()
             next_state, reward, terminated, truncated, _ = env.step(action)
-            
-            # Clip rewards to prevent Q-value explosion
-            # if algo == "sac":
-            #     reward = np.clip(reward, -10, 10)
-            #     # Add off-track penalty
-            #     if reward < 0:
-            #         reward -= 2.0
+            episode_env_time += (time.time() - env_start)
             
             # Early termination for poor performance
             if episode_reward < -500:
@@ -162,14 +186,30 @@ def train(env_name="CarRacing-v3", algo="vpg", max_episodes=1000):
             else:
                 done = terminated or truncated
             
+            # Store transition and update for SAC
             if algo == "sac":
                 agent.store_transition(state, action, reward, next_state, log_prob, done)
                 
-                # # Update once per step after warmup
-                # if episode >= start_policy and len(agent.replay_buffer) >= batch_size:
-                #     update_result = agent.update()
-                #     if update_result is not None:
-                #         loss = update_result
+                # ===== OPTIMIZED: Update every N steps with M gradient updates =====
+                should_update = (episode >= start_policy and 
+                               len(agent.replay_buffer) >= batch_size and
+                               steps % update_frequency == 0)
+                
+                if should_update:
+                    update_start = time.time()
+                    
+                    # Perform multiple gradient updates
+                    for _ in range(updates_per_step):
+                        update_result = agent.update()
+                        
+                        if update_result is not None:
+                            policy_loss, q_loss, info = update_result
+                            episode_policy_losses.append(policy_loss)
+                            episode_q_losses.append(q_loss)
+                            episode_alphas.append(info.get("alpha", 0))
+                            total_updates += 1
+                    
+                    episode_update_time += (time.time() - update_start)
             
             state = next_state
             episode_reward += reward
@@ -179,83 +219,145 @@ def train(env_name="CarRacing-v3", algo="vpg", max_episodes=1000):
             if steps > 200 and max_episodes < 10:
                 done = True
         
-        # if algo != "sac":
-        #     print(f"Calling post-episode update for {algo}")
-        #     loss = agent.update()
-        # elif episode < start_policy:
-        #     print(f"Calling post-episode update for SAC warmup")
-        #     try:
-        #         loss = agent.update()
-        #     except Exception as e:
-        #         print(f"ERROR during warmup update!")
-        #         print(f"Buffer size: {len(agent.replay_buffer)}")
-        #         print(f"Error: {e}")
-        #         import traceback
-        #         traceback.print_exc()
-        #         raise
-        
-
+        # ===== Post-episode updates for on-policy algorithms =====
         if algo != "sac":
+            # On-policy algorithms: update once per episode with collected data
             loss = agent.update()
         else:
-            # SAC updates once per episode
-            loss = agent.update()
+            # SAC: Already updated during episode, just compute averages for logging
+            if len(episode_policy_losses) > 0:
+                avg_policy_loss = np.mean(episode_policy_losses)
+                avg_q_loss = np.mean(episode_q_losses)
+                avg_alpha = np.mean(episode_alphas)
+                loss = (avg_policy_loss, avg_q_loss, {"alpha": avg_alpha})
+                
+                # Update running statistics
+                running_policy_loss.extend(episode_policy_losses)
+                running_q_loss.extend(episode_q_losses)
+                running_alpha.extend(episode_alphas)
+                
+                # Keep only last 100 updates for running average
+                if len(running_policy_loss) > 100:
+                    running_policy_loss = running_policy_loss[-100:]
+                    running_q_loss = running_q_loss[-100:]
+                    running_alpha = running_alpha[-100:]
+            else:
+                loss = None
+        
+        # Episode timing
+        episode_time = time.time() - episode_start_time
+        episode_times.append(episode_time)
+        if len(episode_times) > 100:
+            episode_times = episode_times[-100:]
+        
+        if episode_update_time > 0:
+            update_times.append(episode_update_time)
+        if episode_env_time > 0:
+            env_step_times.append(episode_env_time)
 
         # Log metrics to WandB if available
         log_dict = {
             "episode": episode,
             "episode_reward": episode_reward,
             "episode_steps": steps,
+            "episode_time": episode_time,
         }
         
         # Handle tuple return from SAC update
         if algo == "sac" and loss is not None and isinstance(loss, tuple):
             policy_loss, q_loss, info = loss
-            log_dict.update({"policy_loss": policy_loss, "q_loss": q_loss, "alpha": info.get("alpha", None)})
-            print(f"Episode {episode} | Reward: {episode_reward:.2f} | Policy Loss: {policy_loss:.4f} | Q Loss: {q_loss:.4f} | Alpha: {info.get('alpha', None)}")
+            log_dict.update({
+                "policy_loss": policy_loss, 
+                "q_loss": q_loss, 
+                "alpha": info.get("alpha", None),
+                "updates_this_episode": len(episode_policy_losses),
+                "total_updates": total_updates,
+                "running_avg_policy_loss": np.mean(running_policy_loss) if running_policy_loss else 0,
+                "running_avg_q_loss": np.mean(running_q_loss) if running_q_loss else 0,
+                "update_time": episode_update_time,
+                "env_time": episode_env_time,
+                "update_time_fraction": episode_update_time / episode_time if episode_time > 0 else 0,
+            })
+            
+            print(f"Ep {episode} | Reward: {episode_reward:.1f} | Steps: {steps} | "
+                  f"Updates: {len(episode_policy_losses)} | Time: {episode_time:.1f}s")
+            
             if episode % 5 == 0:
-                print(f"Action stats - Steering: {action[0]:.2f}, Gas: {action[1]:.2f}, Brake: {action[2]:.2f}")
+                print(f"  Losses - Policy: {policy_loss:.4f}, Q: {q_loss:.4f}, Alpha: {info.get('alpha', 0):.4f}")
+                print(f"  Timing - Env: {episode_env_time:.1f}s ({episode_env_time/episode_time*100:.0f}%), "
+                      f"Update: {episode_update_time:.1f}s ({episode_update_time/episode_time*100:.0f}%)")
+            
+            # Print running averages every 20 episodes
+            if episode % 20 == 0 and episode > 0 and running_policy_loss:
+                print(f"  Running Avg (last 100 updates) - "
+                      f"Policy: {np.mean(running_policy_loss):.4f}, "
+                      f"Q: {np.mean(running_q_loss):.4f}")
+                print(f"  Avg time/episode (last 10): {np.mean(episode_times[-10:]):.1f}s")
+                
         elif loss is not None and isinstance(loss, tuple):
             policy_loss, vf_loss, info = loss
             log_dict.update({"policy_loss": policy_loss, "value_function_loss": vf_loss})
-            print(f"Episode {episode} | Reward: {episode_reward:.2f} | Policy Loss: {policy_loss:.4f} | VF Loss: {vf_loss:.4f}")
+            print(f"Episode {episode} | Reward: {episode_reward:.2f} | Time: {episode_time:.1f}s")
         else:
             if loss is not None:
                 log_dict["loss"] = loss
-                print(f"Episode {episode} | Reward: {episode_reward:.2f} | Loss: {loss:.4f}")
+                print(f"Episode {episode} | Reward: {episode_reward:.2f} | Time: {episode_time:.1f}s")
             else:
-                print(f"Episode {episode} | Reward: {episode_reward:.2f} | Loss: None (buffer warming up)")
+                print(f"Episode {episode} | Reward: {episode_reward:.2f} | Time: {episode_time:.1f}s (warmup)")
         
-        if episode % 10 == 0:
+        if WANDB_AVAILABLE:
+            wandb.log(log_dict)
+        
+        # Save less frequently to reduce I/O overhead
+        if episode % 50 == 0 and episode > 0:
             agent.save_model(f"./models/{algo}_{episode}.pth")
     
     # Save final model
     print(f"\nTraining complete! Saving final model...")
     agent.save_model(f"./models/{algo}_{max_episodes-1}_final.pth")
     
+    if algo == "sac":
+        print(f"\n=== SAC Training Statistics ===")
+        print(f"Total gradient updates: {total_updates}")
+        print(f"Total environment steps: {total_steps}")
+        print(f"Updates per step ratio: {total_updates / total_steps if total_steps > 0 else 0:.2f}")
+        print(f"Average episode time: {np.mean(episode_times):.2f}s")
+        if update_times:
+            print(f"Average update time per episode: {np.mean(update_times):.2f}s")
+        if env_step_times:
+            print(f"Average env step time per episode: {np.mean(env_step_times):.2f}s")
+        if running_policy_loss:
+            print(f"Final running avg policy loss: {np.mean(running_policy_loss):.4f}")
+            print(f"Final running avg Q loss: {np.mean(running_q_loss):.4f}")
+            print(f"Final alpha: {running_alpha[-1]:.4f}")
+    
     if WANDB_AVAILABLE:
         wandb.finish()
     
     env.close()
 
+
 if __name__ == "__main__":
-    # Check for WandB API key - fail if not set
+    # Check for WandB API key
     if WANDB_AVAILABLE:
         wandb_api_key = os.getenv("WANDB_API_KEY")
         if not wandb_api_key:
-            raise ValueError("WANDB_API_KEY is not set in the environment variables. Please create a .env file with your WandB API key. See README.md for setup instructions.")
+            print("Warning: WANDB_API_KEY not set. Continuing without WandB logging.")
     
     # Ensure models directory exists
     os.makedirs("./models", exist_ok=True)
     
-    # print("\n--- Testing REINFORCE for 5000 episodes ---")
-    # train(algo="reinforce", max_episodes=5000)
-
-    # print("--- Testing VPG for 3000 episodes ---")
-    #train(algo="vpg", max_episodes=3000)
-        
-    # print("\n--- Testing PPO for 3000 episodes ---")
-    # train(algo="reinforce", max_episodes=200)
-
-    print("\n--- Testing SAC for 1000 episodes ---")
-    train(algo="sac", max_episodes=1000)
+    # OPTIMIZATION OPTIONS - Choose one:
+    
+    # Option 1: Update every 4 steps (4x faster, still good performance)
+    print("\n--- Training SAC with optimized updates (every 4 steps) ---")
+    train(algo="sac", max_episodes=1000, update_frequency=4, updates_per_step=1)
+    
+    # Option 2: Update every 10 steps (10x faster, may impact performance slightly)
+    # train(algo="sac", max_episodes=1000, update_frequency=10, updates_per_step=1)
+    
+    # Option 3: Update every 4 steps with 2 gradient updates each time (2x updates at 4x spacing)
+    # train(algo="sac", max_episodes=1000, update_frequency=4, updates_per_step=2)
+    
+    # Option 4: Standard approach (update every step) - slowest but most stable
+    # train(algo="sac", max_episodes=1000, update_frequency=1, updates_per_step=1)

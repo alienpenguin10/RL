@@ -15,8 +15,8 @@ class PolicyNetwork(nn.Module):
     def __init__(self):
         super().__init__()
         self.convnet = ConvNet()
-        # ConvNet output: 256 channels * 4 * 4 spatial = 4096
-        self.fc1 = nn.Linear(256 * 4 * 4, 512)
+        # ConvNet output with (4, 84, 84) input: 256 channels * 2 * 2 spatial = 1024
+        self.fc1 = nn.Linear(256 * 2 * 2, 512)  # Changed from 256 * 4 * 4
         self.fc2 = nn.Linear(512, 64)
         
         # Separate heads for different action types (steering, gas, brake)
@@ -40,13 +40,16 @@ class PolicyNetwork(nn.Module):
         self.LOG_STD_MIN = -20
         self.LOG_STD_MAX = 2
 
+        self.register_buffer('action_scale', torch.FloatTensor([1.0, 0.5, 0.5]))
+        self.register_buffer('action_bias', torch.FloatTensor([0.0, 0.5, 0.5]))
+
     def forward(self, x):
         # Normalize pixel values to [0, 1]
         x = x.float() / 255.0
 
         # CNN processing
         x = self.convnet(x)
-        x = x.reshape(x.size(0), -1)  # Flatten, prev .view() didn't work, errored saying the data is contiguous
+        x = x.reshape(x.size(0), -1)  # Flatten
         x = torch.relu(self.fc1(x))
         x = torch.relu(self.fc2(x))
         
@@ -108,36 +111,20 @@ class PolicyNetwork(nn.Module):
     
     def step_new(self, state):
         """SAC action sampling with tanh squashing and log-prob correction"""
-        # Forward pass
-        mu, logstd = self.forward(state)
-        std = logstd.exp()
-        
-        # Create distribution and sample with reparameterization
-        dist = Normal(mu, std)
-        actions = dist.rsample()  # Reparameterization trick for gradients
-        batch_size = actions.shape[0]
-        
-        # Log probability before squashing
-        log_prob = dist.log_prob(actions).sum(dim=-1)
-        
-        # Apply tanh squashing
-        squashed = torch.tanh(actions)
-        
-        # Log-prob correction for tanh squashing (more stable formula)
-        # Corrects for the change of variables: log π(a) = log μ(u) - log|da/du|
-        log_prob_correction = torch.log(1 - squashed.pow(2) + 1e-6).sum(dim=1)
-        log_prob = log_prob - log_prob_correction
-        
-        # Scale actions to environment ranges
-        steering_action = squashed[:, 0].view(batch_size, 1)  # [-1, 1]
-        gas_action = ((squashed[:, 1] + 1) / 2).view(batch_size, 1)  # [0, 1]
-        brake_action = ((squashed[:, 2] + 1) / 2).view(batch_size, 1)  # [0, 1]
-        
-        # Clamp brake to valid range
-        brake_action = torch.clamp(brake_action, 0.0, 1.0)
-        
-        # Concatenate final action
-        action = torch.cat((steering_action, gas_action, brake_action), dim=1)
+        mean, log_std = self.forward(state)
+        std = log_std.exp()
+
+        normal = Normal(mean, std)
+        # Reparameterization trick (mean + std * N(0,1))
+        # This allows backprop with respect to mean and std
+        x_t = normal.rsample()
+        y_t = torch.tanh(x_t)
+        action = y_t * self.action_scale + self.action_bias
+
+        # Log probability with tanh correction
+        log_prob = normal.log_prob(x_t)
+        log_prob -= torch.log(self.action_scale * (1 - y_t.pow(2)) + 1e-6)
+        log_prob = log_prob.sum(1, keepdim=True)
         
         return action, log_prob
 
@@ -179,8 +166,8 @@ class ValueNetwork(nn.Module):
     def __init__(self):
         super().__init__()
         self.convnet = ConvNet()
-        # ConvNet output: 256 channels * 4 * 4 spatial = 4096
-        self.fc1 = nn.Linear(256 * 4 * 4, 512)
+        # ConvNet output: 256 channels * 2 * 2 spatial = 1024
+        self.fc1 = nn.Linear(256 * 2 * 2, 512)  # Changed from 256 * 4 * 4
         self.fc2 = nn.Linear(512, 64)
         self.fc3 = nn.Linear(64, 1)
 
@@ -192,47 +179,49 @@ class ValueNetwork(nn.Module):
         return self.fc3(x).squeeze(-1)  # Flatten to (batch,)
 
 class QNetwork(nn.Module):
-    def __init__(self):
+    def __init__(self, action_dim=3):
         super().__init__()
+        
+        # Use the same ConvNet as PolicyNetwork/ValueNetwork
         self.convnet = ConvNet()
-
-        self.fc1 = nn.Linear(256 * 4 * 4 + 3, 512)
-        self.fc2 = nn.Linear(512, 64)
-        self.fc3 = nn.Linear(64, 1)
-
+        
+        # ConvNet output: 256 * 2 * 2 = 1024
+        self.flatten_size = 256 * 2 * 2
+        
+        # Fully connected layers (state features + action)
+        self.fc1 = nn.Linear(self.flatten_size + action_dim, 512)
+        self.fc2 = nn.Linear(512, 1)
+    
     def forward(self, state, action):
+        """Takes both state and action"""
+        # Normalize state
+        state = state.float() / 255.0
+        
+        # Process through ConvNet
         x = self.convnet(state)
-        x = x.reshape(x.size(0), -1)
-
-        x = torch.cat([x, action], dim=1)
-
+        x = x.view(x.size(0), -1)  # Flatten: (batch, 1024)
+        
+        # Concatenate with action
+        x = torch.cat([x, action], dim=1)  # (batch, 1024 + action_dim)
+        
         x = torch.relu(self.fc1(x))
-        x = torch.relu(self.fc2(x))
-        x = self.fc3(x)
-        return x
+        q_value = self.fc2(x)
+        return q_value
 
 class ConvNet(nn.Module):
+    """Lighter CNN for faster training"""
     def __init__(self):
         super().__init__()
-        # CNN for processing 96*96*3 RGB images
-        # Receptive field on final layer = 88 x 88 pixels
-
-        # 96 -> 24 -> 12 -> 10 -> 8 -> 6 -> 4
-        # channels: 3 -> 16 -> 32 -> 64 -> 128 -> 256
-        self.conv1 = nn.Conv2d(in_channels=3, out_channels=16, kernel_size=7, stride=4, padding=2)
-        self.pool1 = nn.MaxPool2d(kernel_size=2, stride=2)
-        self.conv2 = nn.Conv2d(in_channels=16, out_channels=32, kernel_size=5, stride=1, padding=1)
-        self.conv3 = nn.Conv2d(in_channels=32, out_channels=64, kernel_size=3, stride=1)
-        self.conv4 = nn.Conv2d(in_channels=64, out_channels=128, kernel_size=3, stride=1)
-        self.conv5 = nn.Conv2d(in_channels=128, out_channels=256, kernel_size=3, stride=1)
+        self.conv = nn.Sequential(
+            nn.Conv2d(4, 32, kernel_size=8, stride=4),  # (4, 84, 84) -> (32, 20, 20)
+            nn.ReLU(),
+            nn.Conv2d(32, 64, kernel_size=4, stride=2),  # (32, 20, 20) -> (64, 9, 9)
+            nn.ReLU(),
+            nn.Conv2d(64, 128, kernel_size=3, stride=1),  # (64, 9, 9) -> (128, 7, 7)
+            nn.ReLU(),
+            nn.Conv2d(128, 256, kernel_size=4, stride=2),  # (128, 7, 7) -> (256, 2, 2)
+            nn.ReLU()
+        )
 
     def forward(self, x):
-        x = x.float() / 255.0 # Normalize pixel values to [0, 1]
-        x = torch.relu(self.conv1(x))
-        x = self.pool1(x)
-        x = torch.relu(self.conv2(x))
-        x = torch.relu(self.conv3(x))
-        x = torch.relu(self.conv4(x))
-        x = torch.relu(self.conv5(x))
-
-        return x
+        return self.conv(x)

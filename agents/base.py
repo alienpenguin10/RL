@@ -7,7 +7,7 @@ class BaseAgent:
         self.learning_rate = learning_rate
         self.gamma = gamma
         # Detect device here to be used by all children
-        self.device = torch.device("cuda" if torch.cuda.is_available() else "mps")
+        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         
         self.clear_memory()
 
@@ -29,11 +29,20 @@ class BaseAgent:
         self.values.append(value)
 
     def preprocess_state(self, state):
-        # Input: (96, 96, 3) -> Output:(1, 3, 96, 96) on DEVICE
-        # Pytorch expects CHW format but state is HWC, so we need to permute the dimensions
         if isinstance(state, np.ndarray):
-            state = torch.FloatTensor(state).permute(2,0,1).unsqueeze(0)
-        return state.to(self.device) # Crucial: Move to GPU
+            # Check if state is already in (C, H, W) format
+            if state.shape[0] in [3, 4]:  # Channels-first (C, H, W)
+                state = torch.from_numpy(state).float()
+            elif state.shape[-1] in [3, 4]:  # Channels-last (H, W, C)
+                state = np.transpose(state, (2, 0, 1))  # -> (C, H, W)
+                state = torch.from_numpy(state).float()
+            else:
+                raise ValueError(f"Unexpected state shape: {state.shape}")
+        
+        if state.dim() == 3:
+            state = state.unsqueeze(0)  # Add batch dimension -> (1, C, H, W)
+        
+        return state.to(self.device)
 
     def save_model(self, filepath):
         """
