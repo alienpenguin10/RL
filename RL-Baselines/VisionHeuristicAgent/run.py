@@ -7,7 +7,7 @@ from dotenv import load_dotenv
 from collections import deque
 
 # Script config
-FIX_SEED = 578774 # Set to an integer to replay a specific seed (e.g. 12345)
+FIX_SEED = None # Set to an integer to replay a specific seed (e.g. 12345)
 VISUALIZE = True
 PUSH_TO_WANDB = False
 
