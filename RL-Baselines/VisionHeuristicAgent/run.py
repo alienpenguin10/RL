@@ -7,18 +7,18 @@ from dotenv import load_dotenv
 from collections import deque
 
 # Script config
-FIX_SEED = None # Set to an integer to replay a specific seed (e.g. 12345)
+FIX_SEED = 578774 # Set to an integer to replay a specific seed (e.g. 12345)
 VISUALIZE = True
 PUSH_TO_WANDB = False
 
 load_dotenv()
 
 # Speed Constants
-TARGET_SPEED = 0.101
+TARGET_SPEED = 0.086
 # Steering Constants
-STEERING_MAGNITUDE = 0.295 # Valid range: [0.0, 1.0]
-SENSOR_LOOKAHEAD_Y = 39 # Valid range: [2 (way ahead), 6ß0 (just in front of car)]
-SENSOR_OFFSET_X = 15 # Valid range: [2 (close), 12 (wide)]
+STEERING_MAGNITUDE = 0.325 # Valid range: [0.0, 1.0]
+SENSOR_LOOKAHEAD_Y = 29 # Valid range: [2 (way ahead), 6ß0 (just in front of car)]
+SENSOR_OFFSET_X = 7 # Valid range: [2 (close), 12 (wide)]
 
 def get_sensor_coordinates():
     """
@@ -167,8 +167,7 @@ def run_simple_agent(max_episodes=10000):
     print(f"WandB Logging: {'ENABLED' if PUSH_TO_WANDB else 'DISABLED'}")
 
     # Track Global Statistics
-    cumulative_reward = 0.0
-    episodes_completed = 0
+    all_rewards = []
     
     start_time = time.time()
     try:
@@ -220,14 +219,14 @@ def run_simple_agent(max_episodes=10000):
                     done = terminated or truncated
                     episode_reward += reward
                 
-                cumulative_reward += episode_reward
-                episodes_completed += 1
-                global_mean = cumulative_reward / episodes_completed
+                all_rewards.append(episode_reward)
+                global_mean = np.mean(all_rewards)
                 
                 if PUSH_TO_WANDB:
                     wandb.log({
                         "reward_mean": global_mean,
                         "episode_reward": episode_reward,
+                        "episode": episode + 1
                     })
                 print(f"Episode {episode+1}/{max_episodes}: Reward={episode_reward:.2f}, GlobalMean={global_mean:.2f}")
             
@@ -245,14 +244,14 @@ def run_simple_agent(max_episodes=10000):
                 for i, result in enumerate(pool.imap_unordered(run_episode, range(max_episodes))):
                     episode_reward = result
                     
-                    cumulative_reward += episode_reward
-                    episodes_completed += 1
-                    global_mean = cumulative_reward / episodes_completed
+                    all_rewards.append(episode_reward)
+                    global_mean = np.mean(all_rewards)
                     
                     if PUSH_TO_WANDB:
                         wandb.log({
                             "reward_mean": global_mean,
                             "episode_reward": episode_reward,
+                            "episode": i + 1
                         })
                     
                     # Print every 10 completions to avoid spamming console
@@ -263,13 +262,26 @@ def run_simple_agent(max_episodes=10000):
         print("\n[STOPPING] Ctrl+C detected. Gracefully finishing...")
     finally:
         elapsed_time = time.time() - start_time
-        print(f"\nSimulation Finished!")
+        print(f"\n=== SIMULATION FINISHED ===")
         print(f"Total Time: {elapsed_time:.2f}s")
-        if episodes_completed > 0:
-            print(f"Final Global Mean Reward: {cumulative_reward/episodes_completed:.2f} ({episodes_completed} episodes)")
-        
-        if PUSH_TO_WANDB:
-            wandb.finish()
+        if len(all_rewards) > 0:
+            final_mean = np.mean(all_rewards)
+            final_std = np.std(all_rewards)
+            final_median = np.median(all_rewards)
+            final_min = np.min(all_rewards)
+            final_max = np.max(all_rewards)
+            
+            print(f"Episodes: {len(all_rewards)}")
+            print(f"Mean Reward:   {final_mean:.2f} +/- {final_std:.2f}")
+            print(f"Median Reward: {final_median:.2f}")
+            print(f"Min / Max:     {final_min:.2f} / {final_max:.2f}")
+            
+            # Log final stats to WandB summary
+            if PUSH_TO_WANDB:
+                wandb.run.summary["final_mean_reward"] = final_mean
+                wandb.run.summary["final_std_reward"] = final_std
+                wandb.run.summary["final_median_reward"] = final_median
+                wandb.finish()
 
 if __name__ == "__main__":
     run_simple_agent()
