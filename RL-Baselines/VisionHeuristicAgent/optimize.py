@@ -199,14 +199,14 @@ def run_optimization():
                 # Find which episode for this agent was best
                 best_agent_idx = best_idx[-1]
                 best_overall_seed = seeds[best_agent_idx]
-                print(f"  >>> NEW CHAMPION: Avg={best_overall_score:.2f} (BestEpSeed: {best_overall_seed})")
+                print(f"  > New Best Avg: {best_overall_score:.2f} (Best Ep Seed: {best_overall_seed})")
             
-            print(f"Gen {gen+1}: GenBestAvg={best_avg_score:.2f}, PopAvg={avg_score:.2f} | Params: Spd={current_best_ind[0]:.3f}, Steer={current_best_ind[1]:.3f} | Time: {time.time()-start_time:.2f}s")
+            print(f"Gen {gen+1}: BestAvg={best_avg_score:.2f}, PopAvg={avg_score:.2f} | Params: Spd={current_best_ind[0]:.3f}, Steer={current_best_ind[1]:.3f}, Y={int(current_best_ind[2])}, X={int(current_best_ind[3])} | Time: {time.time()-start_time:.2f}s")
             
             wandb.log({
-                "generation": gen + 1,
-                "gen_best_avg_score": best_avg_score,
-                "global_best_avg_score": best_overall_score, # This is the "High Score" line
+                # "generation": gen + 1,
+                # "gen_best_avg_score": best_avg_score,
+                # "global_best_avg_score": best_overall_score,
                 "pop_avg_score": avg_score,
                 "best_target_speed": current_best_ind[0],
                 "best_steering": current_best_ind[1],
