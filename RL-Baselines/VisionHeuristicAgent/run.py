@@ -8,8 +8,8 @@ from collections import deque
 
 # Script config
 FIX_SEED = None # Set to an integer to replay a specific seed (e.g. 12345)
-VISUALIZE = True
-PUSH_TO_WANDB = False
+VISUALIZE = False
+PUSH_TO_WANDB = True
 
 load_dotenv()
 
@@ -226,7 +226,7 @@ def run_simple_agent(max_episodes=10000):
                     wandb.log({
                         "reward_mean": global_mean,
                         "episode_reward": episode_reward,
-                        "episode": episode + 1
+                        #"episode": episode + 1
                     })
                 print(f"Episode {episode+1}/{max_episodes}: Reward={episode_reward:.2f}, GlobalMean={global_mean:.2f}")
             
@@ -251,7 +251,7 @@ def run_simple_agent(max_episodes=10000):
                         wandb.log({
                             "reward_mean": global_mean,
                             "episode_reward": episode_reward,
-                            "episode": i + 1
+                            #"episode": i + 1 
                         })
                     
                     # Print every 10 completions to avoid spamming console
