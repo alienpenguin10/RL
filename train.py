@@ -1,12 +1,12 @@
 import gymnasium as gym
-import numpy as np
 from agents.reinforce import REINFORCEAgent
 from agents.vpg import VPGAgent
 from agents.ppo import PPOAgent
-import torch
+from agents.sac import SACAgent
 import os
 import signal
 import sys
+from env_wrapper import ProcessedFrame, FrameStack, ActionRemapWrapper
 
 # Try to import wandb (optional)
 try:
@@ -39,13 +39,18 @@ def train(env_name="CarRacing-v3", algo="vpg", max_episodes=1000):
     # Note: render_mode=None for training speed
 
     env = gym.make(env_name, continuous=True, render_mode=None)
-  
+    env = ProcessedFrame(env)
+    env = ActionRemapWrapper(env)
+    env = FrameStack(env, num_frames=4, skip_frames=2)
+
     if algo == "reinforce":
         agent = REINFORCEAgent(learning_rate=0.001)
     elif algo == "vpg":
         agent = VPGAgent(learning_rate=0.0003)
     elif algo == "ppo":
-        agent = PPOAgent(learning_rate=0.0003, clip_ratio=0.2)
+        agent = PPOAgent(learning_rate=0.0003)
+    elif algo == "sac":
+        agent = SACAgent()
     else:
         raise ValueError(f"Unknown algorithm: {algo}")
         
@@ -143,10 +148,13 @@ if __name__ == "__main__":
     os.makedirs("./models", exist_ok=True)
     
     # print("\n--- Testing REINFORCE for 5000 episodes ---")
-    train(algo="reinforce", max_episodes=5000)
+    # train(algo="reinforce", max_episodes=5000)
 
     # print("--- Testing VPG for 3000 episodes ---")
     #train(algo="vpg", max_episodes=3000)
         
-    # print("\n--- Testing PPO for 3000 episodes ---")
-    # train(algo="reinforce", max_episodes=200)
+    print("\n--- Testing PPO for 3000 episodes ---")
+    train(algo="ppo", max_episodes=200)
+
+    # print("\n--- Testing SAC for 100 episodes ---")
+    # train(algo="sac", max_episodes=100)

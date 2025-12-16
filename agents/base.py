@@ -31,11 +31,12 @@ class BaseAgent:
         self.values.append(value)
 
     def preprocess_state(self, state):
-        # Input: (96, 96, 3) -> Output:(1, 3, 96, 96) on DEVICE
-        # Pytorch expects CHW format but state is HWC, so we need to permute the dimensions
+        # Input from FrameStack is (C, H, W) = (num_frames, 84, 96)
+        # We need to add batch dim: (1, C, H, W)
         if isinstance(state, np.ndarray):
-            state = torch.FloatTensor(state).permute(2,0,1).unsqueeze(0)
-        return state.to(self.device) # Crucial: Move to GPU
+            state = torch.FloatTensor(state).unsqueeze(0)
+        return state.to(self.device)
+        
 
     def save_model(self, filepath):
         """
