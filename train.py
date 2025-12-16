@@ -94,7 +94,7 @@ def train(env_name="CarRacing-v3", algo="vpg", max_episodes=1000):
             
             # Store transition
             # Ensure we pass all required arguments
-            agent.store_transition(state, action, reward, next_state, log_prob, done, value)
+            agent.store_transition(state, action, reward, log_prob, terminated, truncated, value)
             
             state = next_state
             episode_reward += reward

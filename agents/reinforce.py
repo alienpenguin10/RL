@@ -12,7 +12,7 @@ class REINFORCEAgent(BaseAgent):
     
     def select_action(self, state):
         state_tensor = self.preprocess_state(state)
-        
+
         action, log_prob = self.policy_network.step(state_tensor)
 
         # Return action as numpy (thats what env expects) also remove batch dimension, keep log_prob as tensor for graph
