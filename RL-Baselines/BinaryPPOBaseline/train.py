@@ -9,9 +9,9 @@ from stable_baselines3.common.callbacks import BaseCallback
 import wandb
 
 # Constants
-VISUALIZE = True  # True: Single env with render, False: Parallel training (fast)
-EVALUATE_ONLY = True # True: Run trained model (no training), False: Train model
-PUSH_TO_WANDB = False  # True: Log to WandB, False: No logging
+VISUALIZE = False  # True: Single env with render, False: Parallel training (fast)
+EVALUATE_ONLY = False # True: Run trained model (no training), False: Train model
+PUSH_TO_WANDB = True  # True: Log to WandB, False: No logging
 TOTAL_TIMESTEPS = 20_000_000
 N_ENVS = 8  # Number of parallel environments when VISUALIZE=False
 
