@@ -4,129 +4,94 @@ Same architecture as REINFORCE, adapted for VPG usage
 """
 import torch
 import torch.nn as nn
-from torch.distributions import Normal
-import numpy as np
 import torch.nn.functional as F
 
-
-# Remove global device check, handled in Agent
-
-class PolicyNetwork(nn.Module):
-    def __init__(self):
+class MLP(nn.Module):
+    def __init__(self, input_dim, hidden_dims, output_dim, activation=nn.ReLU, output_activation=None):
         super().__init__()
-        self.convnet = ConvNet()
-        # ConvNet output with (4, 84, 84) input: 256 channels * 2 * 2 spatial = 1024
-        self.fc1 = nn.Linear(256 * 2 * 2, 512)  # Changed from 256 * 4 * 4
-        self.fc2 = nn.Linear(512, 64)
+        layers = []
+        dims = [input_dim] + hidden_dims
+        for i in range(len(dims) - 1):
+            layers.extend([nn.Linear(dims[i], dims[i+1]), activation()])
+        layers.append(nn.Linear(dims[-1], output_dim))
+        if output_activation:
+            layers.append(output_activation())
+        self.net = nn.Sequential(*layers)
+    
+    def forward(self, x):
+        return self.net(x)
+
+class ConvNet(nn.Module):
+    def __init__(self, obs_shape, feature_dim=512):
+        super().__init__()
+        # obs_shape from gym: (H, W, C) -> convert to (C, H, W) for PyTorch conv
+        if len(obs_shape) == 3:
+            # Assume gym format (H, W, C) if last dim is small (channels)
+            if obs_shape[2] <= 4:
+                self.input_shape = (obs_shape[2], obs_shape[0], obs_shape[1])  # (C, H, W)
+            else:
+                self.input_shape = obs_shape  # Already (C, H, W)
+        else:
+            self.input_shape = obs_shape
+            
+        self.conv1 = nn.Conv2d(self.input_shape[0], 32, 8, stride=4)
+        self.conv2 = nn.Conv2d(32, 64, 4, stride=2)
+        self.conv3 = nn.Conv2d(64, 64, 3, stride=1)
         
-        # Separate heads for different action types (steering, gas, brake)
-        """
-        The Car Racing action space is asymmetric:
-        Steering: [-1, 1] (tanh works perfectly)
-        Gas: [0, 1] (sigmoid)
-        Brake: [0, 1] (sigmoid)
-        """
-        self.steering_mean = nn.Linear(64, 1)  
-        self.steering_log_std = nn.Linear(64, 1)  
-
-        self.gas_mean = nn.Linear(64, 1)  
-        self.gas_log_std = nn.Linear(64, 1) 
-
-        self.brake_mean = nn.Linear(64, 1)  
-        self.brake_log_std = nn.Linear(64, 1) 
-
-        # Constants for log_std clamping
-        # This is used to prevent the log_std from becoming too large or too small
-        self.LOG_STD_MIN = -20
-        self.LOG_STD_MAX = 2
-
-        self.register_buffer('action_scale', torch.FloatTensor([1.0, 0.5, 0.5]))
-        self.register_buffer('action_bias', torch.FloatTensor([0.0, 0.5, 0.5]))
+        with torch.no_grad():
+            dummy = torch.zeros(1, *self.input_shape)
+            dummy = self.conv3(self.conv2(self.conv1(dummy)))
+            conv_out_size = dummy.numel()
+        
+        self.fc = nn.Linear(conv_out_size, feature_dim)
+        self.feature_dim = feature_dim
 
     def forward(self, x):
-        # Normalize pixel values to [0, 1]
-        x = x.float() / 255.0
-
-        # CNN processing
-        x = self.convnet(x)
-        x = x.reshape(x.size(0), -1)  # Flatten
-        x = torch.relu(self.fc1(x))
-        x = torch.relu(self.fc2(x))
+        # Check if input is (B, H, W, C) and needs permutation to (B, C, H, W)
+        # We use self.input_shape[0] which stores the expected channel count
+        if len(x.shape) == 4:
+            if x.shape[1] != self.input_shape[0] and x.shape[-1] == self.input_shape[0]:
+                x = x.permute(0, 3, 1, 2).contiguous()
         
-        # Compute means with appropriate activations
-        # Steering: [-1, 1] using tanh
-        steering_mean = torch.tanh(self.steering_mean(x))
-        steering_log_std = self.steering_log_std(x)
-        steering_log_std = torch.clamp(steering_log_std, self.LOG_STD_MIN, self.LOG_STD_MAX)
-
-        # Gas: [0, 1] using sigmoid
-        gas_mean = torch.sigmoid(self.gas_mean(x))  
-        gas_log_std = self.gas_log_std(x)
-        gas_log_std = torch.clamp(gas_log_std, self.LOG_STD_MIN, self.LOG_STD_MAX)
-
-        # Brake: [0, 1] using sigmoid
-        brake_mean = torch.sigmoid(self.brake_mean(x))  
-        brake_log_std = self.brake_log_std(x)
-        brake_log_std = torch.clamp(brake_log_std, self.LOG_STD_MIN, self.LOG_STD_MAX)
-
-        # Concatenate means and log stds
-        means = torch.cat([steering_mean, gas_mean, brake_mean], dim=1)
-        log_stds = torch.cat([steering_log_std, gas_log_std, brake_log_std], dim=1)
-        return means, log_stds
-
-    def step(self, state):
-        # Step 1: Forward pass
-        # Input: state shape (batch_size=1, 3, 96, 96) - RGB image
-        # State is already a tensor on device from agent.preprocess_state
-        means, log_stds = self.forward(state) # means:(batch_size, 3) = [[steering_mean, gas_mean, brake_mean]], log_stds:(batch_size, 3) = [[steering_log_std, gas_log_std, brake_log_std]]
-        
-        # Step 2: Convert log_std to std
-        stds = torch.exp(log_stds) # stds:(batch_size, 3) = [[steering_std, gas_std, brake_std]]
-        
-        # Step 3: Create Gaussian distribution
-        # Creates 3 independent Normal distributions:
-        #    Steering: Normal(mean=0.2, std=0.223) 
-        #    Gas:      Normal(mean=0.7, std=0.135)  
-        #    Brake:    Normal(mean=0.1, std=0.050)
-        dist = torch.distributions.Normal(means, stds)
-        action = dist.sample() # action:(batch_size, 3) = [[steering_raw, gas_raw, brake_raw]]
-        
-        # Step 4: Calculate log probability (BEFORE clamping)
-        # Important: Calculate log_prob using original sampled values, not clamped ones!
-        # This ensures the probability math matches the distribution we sampled from
-        # Needed in loss function calculation
-        log_prob = dist.log_prob(action).sum(dim=1) # log_prob:(batch_size,) = [total_log_prob] = [log_prob_steering + log_prob_gas + log_prob_brake] = [log(Normal(0.2, 0.223).pdf(steering_raw)) + log(Normal(0.7, 0.135).pdf(gas_raw)) + log(Normal(0.1, 0.050).pdf(brake_raw))]
-        
-        # Step 5: Clamp actions to valid environment ranges
-        # action[0] = steering ∈ [-1, 1]    (left/right turn)
-        # action[1] = gas ∈ [0, 1]          (0=no gas, 1=full gas)
-        # action[2] = brake ∈ [0, 1]        (0=no brake, 1=full brake)
-        action[:, 0] = torch.clamp(action[:, 0], -1, 1)   # Steering: [-1, 1]
-        action[:, 1] = torch.clamp(action[:, 1], 0, 1)    # Gas: [0, 1]
-        action[:, 2] = torch.clamp(action[:, 2], 0, 1)    # Brake: [0, 1]
-
-        # action:(batch_size, 3) = [[steering, gas, brake]]
-        # log_prob:(batch_size,) = [total_log_prob]
-        return action, log_prob
+        x = F.relu(self.conv1(x))
+        x = F.relu(self.conv2(x))
+        x = F.relu(self.conv3(x))
+        x = x.reshape(x.size(0), -1)
+        return F.relu(self.fc(x))
     
-    def step_new(self, state):
-        """SAC action sampling with tanh squashing and log-prob correction"""
-        mean, log_std = self.forward(state)
-        std = log_std.exp()
+class PolicyNetwork(nn.Module):
+    def __init__(self, obs_shape, action_dim, feature_dim=512, hidden_dims=[256, 256], log_std_min=-20, log_std_max=2):
+        super().__init__()
+        self.log_std_min = log_std_min
+        self.log_std_max = log_std_max
+        self.cnn = ConvNet(obs_shape, feature_dim)
+        self.mean_net = MLP(feature_dim, hidden_dims, action_dim)
+        self.log_std_net = MLP(feature_dim, hidden_dims, action_dim)
+        self.action_dim = action_dim
 
-        normal = Normal(mean, std)
-        # Reparameterization trick (mean + std * N(0,1))
-        # This allows backprop with respect to mean and std
+    def forward(self, x):
+        output = self.cnn(x)
+        mean = self.mean_net(output)
+        log_std = torch.clamp(self.log_std_net(output), self.log_std_min, self.log_std_max)
+        return mean, log_std
+
+    def step(self, state, deterministic=False):
+
+        means, log_stds = self.forward(state)
+        stds = torch.exp(log_stds)
+
+        if deterministic:
+            return torch.tanh(means), None, None
+
+        normal = torch.distributions.Normal(means, stds)
         x_t = normal.rsample()
-        y_t = torch.tanh(x_t)
-        action = y_t * self.action_scale + self.action_bias
-
-        # Log probability with tanh correction
+        action = torch.tanh(x_t)
         log_prob = normal.log_prob(x_t)
-        log_prob -= torch.log(self.action_scale * (1 - y_t.pow(2)) + 1e-6)
-        log_prob = log_prob.sum(1, keepdim=True)
+        log_prob -= torch.log(1 - action.pow(2) + 1e-6)
+        log_prob = log_prob.sum(dim=-1, keepdim=True)
+        entropy = normal.entropy().sum(dim=-1)
         
-        return action, log_prob
+        return action, log_prob, entropy
 
 
     def act(self, state):
@@ -178,50 +143,46 @@ class ValueNetwork(nn.Module):
         x = torch.relu(self.fc2(x))
         return self.fc3(x).squeeze(-1)  # Flatten to (batch,)
 
+
 class QNetwork(nn.Module):
-    def __init__(self, action_dim=3):
+    def __init__(self, obs_shape, action_dim, feature_dim=512, hidden_dims=[256, 256]):
         super().__init__()
-        
-        # Use the same ConvNet as PolicyNetwork/ValueNetwork
-        self.convnet = ConvNet()
-        
-        # ConvNet output: 256 * 2 * 2 = 1024
-        self.flatten_size = 256 * 2 * 2
-        
-        # Fully connected layers (state features + action)
-        self.fc1 = nn.Linear(self.flatten_size + action_dim, 512)
-        self.fc2 = nn.Linear(512, 1)
+        self.cnn = ConvNet(obs_shape, feature_dim)
+        self.net = MLP(feature_dim + action_dim, hidden_dims, 1)
     
     def forward(self, state, action):
         """Takes both state and action"""
-        # Normalize state
-        state = state.float() / 255.0
-        
-        # Process through ConvNet
-        x = self.convnet(state)
-        x = x.view(x.size(0), -1)  # Flatten: (batch, 1024)
-        
-        # Concatenate with action
-        x = torch.cat([x, action], dim=1)  # (batch, 1024 + action_dim)
-        
-        x = torch.relu(self.fc1(x))
-        q_value = self.fc2(x)
-        return q_value
+        features = self.cnn(state)
+        return self.net(torch.cat([features, action], dim=-1))
+    
 
-class ConvNet(nn.Module):
-    """Lighter CNN for faster training"""
-    def __init__(self):
-        super().__init__()
-        self.conv = nn.Sequential(
-            nn.Conv2d(4, 32, kernel_size=8, stride=4),  # (4, 84, 84) -> (32, 20, 20)
-            nn.ReLU(),
-            nn.Conv2d(32, 64, kernel_size=4, stride=2),  # (32, 20, 20) -> (64, 9, 9)
-            nn.ReLU(),
-            nn.Conv2d(64, 128, kernel_size=3, stride=1),  # (64, 9, 9) -> (128, 7, 7)
-            nn.ReLU(),
-            nn.Conv2d(128, 256, kernel_size=4, stride=2),  # (128, 7, 7) -> (256, 2, 2)
-            nn.ReLU()
-        )
-
-    def forward(self, x):
-        return self.conv(x)
+# class QNetwork(nn.Module):
+#     def __init__(self, obs_shape, action_dim, feature_dim=512, hidden_dims=[256, 256]):
+#         super().__init__()
+        
+#         # Use the same ConvNet as PolicyNetwork/ValueNetwork
+#         self.convnet = ConvNet(obs_shape, feature_dim)
+#         self.net = MLP(feature_dim + action_dim, hidden_dims, 1)
+        
+#         # ConvNet output: 256 * 2 * 2 = 1024
+#         self.flatten_size = 256 * 2 * 2
+        
+#         # Fully connected layers (state features + action)
+#         self.fc1 = nn.Linear(self.flatten_size + action_dim, 512)
+#         self.fc2 = nn.Linear(512, 1)
+    
+#     def forward(self, state, action):
+#         """Takes both state and action"""
+#         # Normalize state
+#         state = state.float() / 255.0
+        
+#         # Process through ConvNet
+#         x = self.convnet(state)
+#         x = x.view(x.size(0), -1)  # Flatten: (batch, 1024)
+        
+#         # Concatenate with action
+#         x = torch.cat([x, action], dim=1)  # (batch, 1024 + action_dim)
+        
+#         x = torch.relu(self.fc1(x))
+#         q_value = self.fc2(x)
+#         return q_value

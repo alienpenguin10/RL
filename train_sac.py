@@ -5,7 +5,15 @@ import os
 import signal
 import sys
 import time
-import cv2
+import yaml
+import argparse
+from gymnasium.wrappers import RecordVideo
+from wrappers import PreprocessCarRacing, RepeatAction, FrameStack
+
+
+def load_config(config_path):
+    with open(config_path, 'r') as f:
+        return yaml.safe_load(f)
 
 # Load environment variables from .env file
 from dotenv import load_dotenv
@@ -19,52 +27,6 @@ except ImportError:
     print("wandb not available - training will continue without logging")
 
 
-class GrayscaleWrapper(gym.ObservationWrapper):
-    """Convert RGB observation to grayscale"""
-    def __init__(self, env):
-        super().__init__(env)
-        self.observation_space = gym.spaces.Box(
-            low=0, high=255, shape=(84, 84), dtype=np.uint8
-        )
-    
-    def observation(self, obs):
-        # Convert to grayscale and resize to 84x84
-        gray = cv2.cvtColor(obs, cv2.COLOR_RGB2GRAY)
-        resized = cv2.resize(gray, (84, 84), interpolation=cv2.INTER_AREA)
-        return resized
-
-
-class FrameStackWrapper(gym.Wrapper):
-    """Stack last n frames"""
-    def __init__(self, env, n_stack=4):
-        super().__init__(env)
-        self.n_stack = n_stack
-        self.frames = []
-        
-        obs_shape = env.observation_space.shape
-        # Stack in channels-first format: (n_stack, H, W)
-        self.observation_space = gym.spaces.Box(
-            low=0, high=255, 
-            shape=(n_stack, *obs_shape),  # (4, 84, 84)
-            dtype=np.uint8
-        )
-    
-    def reset(self, **kwargs):
-        obs, info = self.env.reset(**kwargs)
-        self.frames = [obs] * self.n_stack
-        return self._get_observation(), info
-    
-    def step(self, action):
-        obs, reward, terminated, truncated, info = self.env.step(action)
-        self.frames.append(obs)
-        self.frames.pop(0)
-        return self._get_observation(), reward, terminated, truncated, info
-    
-    def _get_observation(self):
-        # Stack along axis 0 to get (4, 84, 84) instead of (84, 84, 4)
-        return np.stack(self.frames, axis=0)  # Stack as first dimension
-
-
 def train_sac_stepwise(
     env_name="CarRacing-v3",
     max_timesteps=1_000_000,
@@ -72,6 +34,9 @@ def train_sac_stepwise(
     checkpoint_interval=50000,
     use_grayscale=True,
     use_frame_stack=True,
+    record_video=False,           # ADD THIS
+    video_folder="./videos",      # ADD THIS
+    video_interval=10,            # ADD THIS
 ):
     # Initialize WandB if available
     if WANDB_AVAILABLE:
@@ -88,22 +53,43 @@ def train_sac_stepwise(
             }
         )
 
-    # Create environment with custom wrappers
+    # Create TRAINING environment (no video recording)
     env = gym.make(env_name, continuous=True)
     
-    if use_grayscale:
-        env = GrayscaleWrapper(env)
+    if use_grayscale and use_frame_stack:
+        env = PreprocessCarRacing(env, resize=(84, 84))
+        env = RepeatAction(env, skip=4)
+        env = FrameStack(env, num_stack=4)
     
-    if use_frame_stack:
-        env = FrameStackWrapper(env, n_stack=4)
+    # Create EVALUATION environment (with video recording)
+    eval_env = gym.make(env_name, continuous=True, render_mode="rgb_array" if record_video else None)
     
+    if record_video:
+        os.makedirs(video_folder, exist_ok=True)
+        eval_env = RecordVideo(
+            eval_env, 
+            video_folder=video_folder,
+            episode_trigger=lambda episode_id: episode_id % video_interval == 0,
+            name_prefix="sac-eval",
+            disable_logger=True
+        )
+        print(f"Recording videos to: {video_folder} (every {video_interval} eval episodes)")
+    
+    if use_grayscale and use_frame_stack:
+        eval_env = PreprocessCarRacing(eval_env, resize=(84, 84))
+        eval_env = RepeatAction(eval_env, skip=4)
+        eval_env = FrameStack(eval_env, num_stack=4)
+
+
     print(f"Environment observation shape: {env.observation_space.shape}")
     print(f"Action space shape: {env.action_space.shape}")
     
+    obs_dim = env.observation_space.shape
     action_dim = env.action_space.shape[0]
     
+    print(obs_dim)
     # Initialize agent
-    agent = SACAgent(action_dim=action_dim)
+    agent = SACAgent(obs_dim=obs_dim, action_dim=action_dim)
     batch_size = agent.batch_size
     
     print(f"Training with batch size: {batch_size}")
@@ -128,8 +114,12 @@ def train_sac_stepwise(
     # Initialize episode tracking
     obs, _ = env.reset()
     episode_reward = 0
+    episode_rewards_history = []
+    log_freq = 1000  # Log training progress every N steps
+    last_log_step = 0
     episode_steps = 0
     episode_num = 0
+    best_eval_score = -np.inf
     
     # Timing statistics
     start_time = time.time()
@@ -139,90 +129,151 @@ def train_sac_stepwise(
     print(f"\nStarting training for {max_timesteps:,} steps...")
     print(f"Warmup period: {start_steps:,} steps\n")
 
+    # fill buffer
+    if len(agent.replay_buffer) > 0:
+        print(f"[BUFFER] Prefilling buffer ({len(agent.replay_buffer)} steps)...")
+        prefill_rewards = []
+        prefill_episode_reward = 0
+        prefill_episode_count = 0
+        log_interval = max(len(agent.replay_buffer) // 10, 1000)  # Log 10 times during prefill
+        
+        for prefill_step in range(len(agent.replay_buffer)):
+            action = env.action_space.sample()
+            next_obs, reward, term, trunc, _ = env.step(action)
+            agent.replay_buffer.push(obs, action, reward, next_obs, term or trunc)
+            
+            prefill_episode_reward += reward
+            obs = next_obs
+            
+            if term or trunc:
+                prefill_rewards.append(prefill_episode_reward)
+                prefill_episode_count += 1
+                obs, _ = env.reset()
+                prefill_episode_reward = 0
+            
+            # Progress logging
+            if (prefill_step + 1) % log_interval == 0:
+                progress = 100 * (prefill_step + 1) / len(agent.replay_buffer)
+                buffer_size = len(agent.replay_buffer)
+                avg_reward = np.mean(prefill_rewards) if prefill_rewards else 0
+                print(f"  [{progress:5.1f}%] Step {prefill_step+1:,}/{len(agent.replay_buffer):,} | "
+                      f"Buffer: {buffer_size:,} | Episodes: {prefill_episode_count} | "
+                      f"Avg Reward: {avg_reward:.2f}")
+        
+        final_buffer_size = len(agent.replay_buffer)
+        final_avg = np.mean(prefill_rewards) if prefill_rewards else 0
+        print(f"[OK] Buffer prefilled: {final_buffer_size:,} transitions | "
+              f"{prefill_episode_count} episodes | Avg reward: {final_avg:.2f}\n")
+
     for total_steps in range(1, max_timesteps + 1):
         current_step[0] = total_steps
         
         # Select action: random during warmup, policy after
-        if total_steps < start_steps:
-            action = env.action_space.sample()
-        else:
-            action, log_prob = agent.select_action(obs)
-
-            # Log actions periodically
-            if WANDB_AVAILABLE and total_steps % 100 == 0:
-                wandb.log({
-                    "action/steering": action[0],
-                    "action/gas": action[1],
-                    "action/brake": action[2],
-                    "action/log_prob": log_prob.item() if log_prob is not None else 0,
-                }, step=total_steps)
-
-        # Step environment
-        next_obs, reward, terminated, truncated, info = env.step(action)
+        action = agent.select_action(obs, deterministic=False)
+        next_obs, reward, terminated, truncated, _ = env.step(action)
         done = terminated or truncated
 
-        # Store transition in the replay buf
         agent.store_transition(obs, action, reward, next_obs, done)
 
-        # Update every step after warmup
-        if total_steps >= start_steps and len(agent.replay_buffer) >= batch_size and total_steps % 4 == 0:
-            update_result = agent.update()
-            
-            if update_result is not None and WANDB_AVAILABLE and total_steps % 100 == 0:
-                wandb.log({
-                    "loss/critic": update_result['critic_loss'],
-                    "loss/actor": update_result['actor_loss'],
-                    "loss/alpha": update_result['alpha_loss'],
-                    "alpha": update_result['alpha'],
-                    "entropy": update_result['entropy'],
-                    "q1_mean": update_result['q1_mean'],
-                    "q2_mean": update_result['q2_mean'],
-                    "buffer_size": len(agent.replay_buffer),
-                }, step=total_steps)
+        # Log actions periodically
+        if WANDB_AVAILABLE and total_steps % 100 == 0:
+            wandb.log({
+                "action/steering": action[0],
+                "action/gas": action[1],
+                "action/brake": action[2],
+            }, step=total_steps)
 
+        # Store transition in the replay buffer
         obs = next_obs
         episode_reward += reward
         episode_steps += 1
-        steps_since_log += 1
+
+        # Training update logic
+        buffer_full = len(agent.replay_buffer) >= batch_size
+        
+        if buffer_full:
+            metrics = None
+            # for _ in range(gradient_steps):
+            metrics = agent.update()
+            if metrics and WANDB_AVAILABLE:
+                wandb.log({f'train/{k}': v for k, v in metrics.items()}, step=total_steps)
 
         # Handle episode end
         if done:
+            episode_num += 1
+            episode_rewards_history.append(episode_reward)
+            
+            # Keep only recent 100 episodes
+            if len(episode_rewards_history) > 100:
+                episode_rewards_history.pop(0)
+            
+            # Determine success for CarRacing
+            success = episode_reward >= 900
+            
             if WANDB_AVAILABLE:
                 wandb.log({
-                    "episode/reward": episode_reward,
-                    "episode/steps": episode_steps,
-                    "episode/num": episode_num,
-                    "episode/avg_reward_per_step": episode_reward / episode_steps if episode_steps > 0 else 0,
+                    'train/episode_reward': episode_reward,
+                    'train/episode_length': episode_steps,
+                    'train/episode_count': episode_num,
+                    'train/success': int(success),
+                    'train/rolling_mean_reward': np.mean(episode_rewards_history),
+                    'train/rolling_std_reward': np.std(episode_rewards_history) if len(episode_rewards_history) > 1 else 0,
                 }, step=total_steps)
             
-            # Print progress every episode
-            current_time = time.time()
-            time_elapsed = current_time - last_log_time
-            steps_per_sec = steps_since_log / time_elapsed if time_elapsed > 0 else 0
-            
-            print(f"Episode {episode_num:4d} | "
-                  f"Step {total_steps:7d}/{max_timesteps:7d} | "
-                  f"Reward: {episode_reward:7.2f} | "
-                  f"EpLen: {episode_steps:4d} | "
-                  f"SPS: {steps_per_sec:.1f}")
+            # Progress logging
+            if total_steps - last_log_step >= log_freq:
+                progress = 100 * total_steps / max_timesteps
+                recent_mean = np.mean(episode_rewards_history[-10:]) if episode_rewards_history else 0
+                print(f"[PROGRESS] Step {total_steps:,}/{max_timesteps:,} ({progress:.1f}%) | "
+                      f"Episodes: {episode_num} | Recent Avg: {recent_mean:.1f}")
+                last_log_step = total_steps
             
             obs, _ = env.reset()
             episode_reward = 0
             episode_steps = 0
-            episode_num += 1
+        
+        # Periodic evaluation with video recording
+        if total_steps % checkpoint_interval == 0 and total_steps > 0:
+            print(f"\n[EVAL] Evaluating at step {total_steps:,}...")
+            eval_rewards = []
             
-            last_log_time = current_time
-            steps_since_log = 0
-
-        # Save checkpoint every checkpoint_interval steps
-        if total_steps % checkpoint_interval == 0:
+            for eval_ep in range(5):  # 5 evaluation episodes
+                eval_obs, _ = eval_env.reset()
+                eval_done = False
+                eval_reward = 0
+                eval_steps = 0
+                
+                while not eval_done and eval_steps < 1000:
+                    eval_action = agent.select_action(eval_obs, deterministic=True)
+                    eval_obs, eval_r, eval_term, eval_trunc, _ = eval_env.step(eval_action)
+                    eval_done = eval_term or eval_trunc
+                    eval_reward += eval_r
+                    eval_steps += 1
+                
+                eval_rewards.append(eval_reward)
+                print(f"    Eval Episode {eval_ep+1}: {eval_reward:.2f}")
+            
+            eval_mean = np.mean(eval_rewards)
+            eval_std = np.std(eval_rewards)
+            print(f"[EVAL] Mean reward: {eval_mean:.2f} ± {eval_std:.2f}")
+            
+            if WANDB_AVAILABLE:
+                wandb.log({
+                    'eval/mean_reward': eval_mean,
+                    'eval/std_reward': eval_std,
+                    'eval/min_reward': np.min(eval_rewards),
+                    'eval/max_reward': np.max(eval_rewards),
+                }, step=total_steps)
+            
+            # Save best model
+            if eval_mean > best_eval_score:
+                best_eval_score = eval_mean
+                agent.save_model(f"./models/sac_best.pth")
+                print(f"[BEST] New best model saved! Score: {best_eval_score:.2f}")
+            
+            # Save checkpoint
             agent.save_model(f"./models/sac_step_{total_steps}.pth")
-            elapsed = time.time() - start_time
-            print(f"\n{'='*60}")
-            print(f"Checkpoint saved at step {total_steps:,}")
-            print(f"Time elapsed: {elapsed/3600:.2f} hours")
-            print(f"Progress: {total_steps/max_timesteps*100:.1f}%")
-            print(f"{'='*60}\n")
+            print(f"[CHECKPOINT] Saved checkpoint at step {total_steps:,}\n")
 
     # Save final model
     agent.save_model(f"./models/sac_final.pth")
@@ -237,22 +288,28 @@ def train_sac_stepwise(
     if WANDB_AVAILABLE:
         wandb.finish()
     env.close()
+    eval_env.close()
 
 
 if __name__ == "__main__":
-    if WANDB_AVAILABLE:
-        wandb_api_key = os.getenv("WANDB_API_KEY")
-        if not wandb_api_key:
-            print("Warning: WANDB_API_KEY not set. Continuing without WandB logging.")
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--config', type=str, required=True, help='Path to config file')
+    args = parser.parse_args()
+    
+    config = load_config(args.config)
     
     os.makedirs("./models", exist_ok=True)
     
-    print("\n--- Training SAC with step-based updates (custom wrappers) ---")
+    print("\n--- Training SAC with step-based updates ---")
     
     train_sac_stepwise(
-        max_timesteps=500_000,
-        start_steps=5000,
-        checkpoint_interval=25000,
-        use_grayscale=True,
-        use_frame_stack=True
+        env_name=config['env_id'],
+        max_timesteps=config['max_timesteps'],
+        start_steps=config['start_steps'],
+        checkpoint_interval=config['checkpoint_interval'],
+        use_grayscale=config['use_grayscale'],
+        use_frame_stack=config['use_frame_stack'],
+        record_video=config.get('record_video', False),
+        video_folder=config.get('video_folder', './videos'),
+        video_interval=config.get('video_interval', 10)
     )
