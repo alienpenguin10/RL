@@ -26,14 +26,8 @@ class PolicyNetwork(nn.Module):
         Gas: [0, 1] (sigmoid)
         Brake: [0, 1] (sigmoid)
         """
-        self.steering_mean = nn.Linear(64, 1)  
-        self.steering_log_std = nn.Linear(64, 1)  
-
-        self.gas_mean = nn.Linear(64, 1)  
-        self.gas_log_std = nn.Linear(64, 1) 
-
-        self.brake_mean = nn.Linear(64, 1)  
-        self.brake_log_std = nn.Linear(64, 1) 
+        self.mean_head = nn.Linear(64, 3)
+        self.log_std_head = nn.Linear(64, 3)
 
         # Constants for log_std clamping
         # This is used to prevent the log_std from becoming too large or too small
@@ -44,69 +38,42 @@ class PolicyNetwork(nn.Module):
         self.register_buffer('action_bias', torch.FloatTensor([0.0, 0.5, 0.5]))
 
     def forward(self, x):
-        # Normalize pixel values to [0, 1]
-        x = x.float() / 255.0
-
         # CNN processing
         x = self.convnet(x)
+<<<<<<< Updated upstream
         x = x.reshape(x.size(0), -1)  # Flatten
+=======
+        x = x.reshape(x.size(0), -1)
+>>>>>>> Stashed changes
         x = torch.relu(self.fc1(x))
         x = torch.relu(self.fc2(x))
-        
-        # Compute means with appropriate activations
-        # Steering: [-1, 1] using tanh
-        steering_mean = torch.tanh(self.steering_mean(x))
-        steering_log_std = self.steering_log_std(x)
-        steering_log_std = torch.clamp(steering_log_std, self.LOG_STD_MIN, self.LOG_STD_MAX)
 
-        # Gas: [0, 1] using sigmoid
-        gas_mean = torch.sigmoid(self.gas_mean(x))  
-        gas_log_std = self.gas_log_std(x)
-        gas_log_std = torch.clamp(gas_log_std, self.LOG_STD_MIN, self.LOG_STD_MAX)
+        mean = self.mean_head(x)
+        log_std = torch.clamp(self.log_std_head(x), self.LOG_STD_MIN, self.LOG_STD_MAX)
 
-        # Brake: [0, 1] using sigmoid
-        brake_mean = torch.sigmoid(self.brake_mean(x))  
-        brake_log_std = self.brake_log_std(x)
-        brake_log_std = torch.clamp(brake_log_std, self.LOG_STD_MIN, self.LOG_STD_MAX)
-
-        # Concatenate means and log stds
-        means = torch.cat([steering_mean, gas_mean, brake_mean], dim=1)
-        log_stds = torch.cat([steering_log_std, gas_log_std, brake_log_std], dim=1)
-        return means, log_stds
+        return mean, log_std
 
     def step(self, state):
-        # Step 1: Forward pass
-        # Input: state shape (batch_size=1, 3, 96, 96) - RGB image
-        # State is already a tensor on device from agent.preprocess_state
-        means, log_stds = self.forward(state) # means:(batch_size, 3) = [[steering_mean, gas_mean, brake_mean]], log_stds:(batch_size, 3) = [[steering_log_std, gas_log_std, brake_log_std]]
-        
-        # Step 2: Convert log_std to std
-        stds = torch.exp(log_stds) # stds:(batch_size, 3) = [[steering_std, gas_std, brake_std]]
-        
-        # Step 3: Create Gaussian distribution
-        # Creates 3 independent Normal distributions:
-        #    Steering: Normal(mean=0.2, std=0.223) 
-        #    Gas:      Normal(mean=0.7, std=0.135)  
-        #    Brake:    Normal(mean=0.1, std=0.050)
-        dist = torch.distributions.Normal(means, stds)
-        action = dist.sample() # action:(batch_size, 3) = [[steering_raw, gas_raw, brake_raw]]
-        
-        # Step 4: Calculate log probability (BEFORE clamping)
-        # Important: Calculate log_prob using original sampled values, not clamped ones!
-        # This ensures the probability math matches the distribution we sampled from
-        # Needed in loss function calculation
-        log_prob = dist.log_prob(action).sum(dim=1) # log_prob:(batch_size,) = [total_log_prob] = [log_prob_steering + log_prob_gas + log_prob_brake] = [log(Normal(0.2, 0.223).pdf(steering_raw)) + log(Normal(0.7, 0.135).pdf(gas_raw)) + log(Normal(0.1, 0.050).pdf(brake_raw))]
-        
-        # Step 5: Clamp actions to valid environment ranges
-        # action[0] = steering ∈ [-1, 1]    (left/right turn)
-        # action[1] = gas ∈ [0, 1]          (0=no gas, 1=full gas)
-        # action[2] = brake ∈ [0, 1]        (0=no brake, 1=full brake)
-        action[:, 0] = torch.clamp(action[:, 0], -1, 1)   # Steering: [-1, 1]
-        action[:, 1] = torch.clamp(action[:, 1], 0, 1)    # Gas: [0, 1]
-        action[:, 2] = torch.clamp(action[:, 2], 0, 1)    # Brake: [0, 1]
+        mean, log_std = self.forward(state)
+        std = torch.exp(log_std)
 
-        # action:(batch_size, 3) = [[steering, gas, brake]]
-        # log_prob:(batch_size,) = [total_log_prob]
+        dist = torch.distributions.Normal(mean, std)
+        u = dist.rsample()  # Unbounded sample
+
+        # Squash to [-1, 1]
+        tanh_action = torch.tanh(u)
+
+        # Log prob with tanh correction (critical!)
+        log_prob = dist.log_prob(u).sum(dim=1)
+        log_prob -= torch.log(1 - tanh_action.pow(2) + 1e-6).sum(dim=1)
+
+        # Scale to actual action bounds
+        action = torch.cat([
+            tanh_action[:, 0:1],  # Steering: [-1, 1]
+            (tanh_action[:, 1:2] + 1) / 2,  # Gas: [0, 1]
+            (tanh_action[:, 2:3] + 1) / 2,  # Brake: [0, 1]
+        ], dim=1)
+
         return action, log_prob
     
     def step_new(self, state):
@@ -205,8 +172,14 @@ class QNetwork(nn.Module):
         x = torch.cat([x, action], dim=1)  # (batch, 1024 + action_dim)
         
         x = torch.relu(self.fc1(x))
+<<<<<<< Updated upstream
         q_value = self.fc2(x)
         return q_value
+=======
+        x = torch.relu(self.fc2(x))
+        x = self.fc3(x)
+        return x.squeeze(-1)
+>>>>>>> Stashed changes
 
 class ConvNet(nn.Module):
     """Lighter CNN for faster training"""

@@ -1,4 +1,6 @@
 import gymnasium as gym
+import numpy as np
+
 from agents.reinforce import REINFORCEAgent
 from agents.vpg import VPGAgent
 from agents.ppo import PPOAgent
@@ -13,6 +15,7 @@ from gymnasium.wrappers import FrameStackObservation, GrayscaleObservation
 # Try to import wandb (optional)
 try:
     import wandb
+
     WANDB_AVAILABLE = True
 except ImportError:
     WANDB_AVAILABLE = False
@@ -20,6 +23,7 @@ except ImportError:
 
 # Load environment variables from .env file
 from dotenv import load_dotenv
+
 load_dotenv()
 
 
@@ -44,13 +48,17 @@ def train(env_name="CarRacing-v3", algo="vpg", max_episodes=1000,
                 "updates_per_step": updates_per_step,
             }
         )
+<<<<<<< Updated upstream
     
     # Create environment
+=======
+
+>>>>>>> Stashed changes
     env = gym.make(env_name, continuous=True, render_mode=None)
     env = GrayscaleObservation(env, keep_dim=False)  # RGB -> Grayscale
     env = FrameStackObservation(env, 4)
     action_dim = env.action_space.shape[0]
-  
+
     if algo == "reinforce":
         agent = REINFORCEAgent(learning_rate=0.001)
     elif algo == "vpg":
@@ -68,16 +76,21 @@ def train(env_name="CarRacing-v3", algo="vpg", max_episodes=1000,
             buffer_loaded = True
     else:
         raise ValueError(f"Unknown algorithm: {algo}")
-        
+
     print(f"Training {algo} on {env_name} using device: {agent.device}")
+<<<<<<< Updated upstream
     print(f"Update frequency: every {update_frequency} steps")
     print(f"Updates per step: {updates_per_step}")
     
     # Track current episode for saving on interrupt
     current_episode = [0]
     
+=======
+
+    current_episode = [0]
+
+>>>>>>> Stashed changes
     def save_on_interrupt(signum, frame):
-        """Save model when interrupted (Ctrl+C)"""
         print(f"\n\nInterrupted! Saving model from episode {current_episode[0]}...")
         agent.save_model(f"./models/{algo}_{current_episode[0]}_interrupted.pth")
         print(f"Model saved to ./models/{algo}_{current_episode[0]}_interrupted.pth")
@@ -86,6 +99,7 @@ def train(env_name="CarRacing-v3", algo="vpg", max_episodes=1000,
         env.close()
         sys.exit(0)
 
+<<<<<<< Updated upstream
     def generate_action(prev_action):
         if np.random.randint(3) % 3:
             return prev_action
@@ -122,6 +136,13 @@ def train(env_name="CarRacing-v3", algo="vpg", max_episodes=1000,
     update_times = []
     env_step_times = []
     
+=======
+    signal.signal(signal.SIGINT, save_on_interrupt)
+
+    # Track total steps for SAC
+    total_steps = 0
+
+>>>>>>> Stashed changes
     for episode in range(max_episodes):
         episode_start_time = time.time()
         current_episode[0] = episode
@@ -136,6 +157,7 @@ def train(env_name="CarRacing-v3", algo="vpg", max_episodes=1000,
         episode_reward = 0
         done = False
         steps = 0
+<<<<<<< Updated upstream
         action = env.action_space.sample()
 
         print(f"\n=== Episode {episode} ===")
@@ -152,11 +174,20 @@ def train(env_name="CarRacing-v3", algo="vpg", max_episodes=1000,
         episode_update_time = 0
         episode_env_time = 0
         
+=======
+
+        # Per-episode loss tracking (for SAC)
+        episode_policy_losses = []
+        episode_q_losses = []
+        latest_alpha = None
+
+>>>>>>> Stashed changes
         while not done:
             # Select action based on algorithm
             if algo == "reinforce":
                 action, log_prob = agent.select_action(state)
                 value = None
+<<<<<<< Updated upstream
             
             elif algo == "sac":
                 # Save buffer after warmup (only once)
@@ -211,10 +242,30 @@ def train(env_name="CarRacing-v3", algo="vpg", max_episodes=1000,
                     
                     episode_update_time += (time.time() - update_start)
             
+=======
+            else:
+                action, log_prob, value = agent.select_action(state)
+
+            next_state, reward, terminated, truncated, _ = env.step(action)
+            done = terminated or truncated
+
+            agent.store_transition(state, action, reward, next_state, log_prob, done, value)
+
+            # SAC: Update every step (off-policy)
+            if algo == "sac":
+                loss = agent.update()
+                if loss is not None:
+                    policy_loss, q_loss, info = loss
+                    episode_policy_losses.append(policy_loss)
+                    episode_q_losses.append(q_loss)
+                    latest_alpha = info.get("alpha", None)
+
+>>>>>>> Stashed changes
             state = next_state
             episode_reward += reward
             steps += 1
             total_steps += 1
+<<<<<<< Updated upstream
             
             if steps > 200 and max_episodes < 10:
                 done = True
@@ -256,10 +307,22 @@ def train(env_name="CarRacing-v3", algo="vpg", max_episodes=1000,
             env_step_times.append(episode_env_time)
 
         # Log metrics to WandB if available
+=======
+
+            if steps > 200 and max_episodes < 10:
+                done = True
+
+        # On-policy algorithms: Update at end of episode
+        if algo in ["reinforce", "vpg", "ppo"]:
+            loss = agent.update()
+
+        # Logging
+>>>>>>> Stashed changes
         log_dict = {
             "episode": episode,
             "episode_reward": episode_reward,
             "episode_steps": steps,
+<<<<<<< Updated upstream
             "episode_time": episode_time,
         }
         
@@ -299,10 +362,40 @@ def train(env_name="CarRacing-v3", algo="vpg", max_episodes=1000,
             log_dict.update({"policy_loss": policy_loss, "value_function_loss": vf_loss})
             print(f"Episode {episode} | Reward: {episode_reward:.2f} | Time: {episode_time:.1f}s")
         else:
+=======
+            "total_steps": total_steps,
+        }
+
+        if algo == "sac":
+            if episode_policy_losses:
+                avg_policy_loss = np.mean(episode_policy_losses)
+                avg_q_loss = np.mean(episode_q_losses)
+                log_dict.update({
+                    "policy_loss": avg_policy_loss,
+                    "q_loss": avg_q_loss,
+                    "alpha": latest_alpha,
+                    "updates_this_episode": len(episode_policy_losses),
+                })
+                print(f"Episode {episode} | Reward: {episode_reward:.2f} | "
+                      f"Policy Loss: {avg_policy_loss:.4f} | Q Loss: {avg_q_loss:.4f} | "
+                      f"Alpha: {latest_alpha:.4f} | Updates: {len(episode_policy_losses)}")
+            else:
+                print(f"Episode {episode} | Reward: {episode_reward:.2f} | (buffer warming up)")
+
+        elif algo in ["vpg", "ppo"] and loss is not None:
+            policy_loss, vf_loss, info = loss
+            log_dict.update({"policy_loss": policy_loss, "value_function_loss": vf_loss})
+            print(f"Episode {episode} | Reward: {episode_reward:.2f} | "
+                  f"Policy Loss: {policy_loss:.4f} | VF Loss: {vf_loss:.4f}")
+
+        elif algo == "reinforce":
+            log_dict["loss"] = loss
+>>>>>>> Stashed changes
             if loss is not None:
                 log_dict["loss"] = loss
                 print(f"Episode {episode} | Reward: {episode_reward:.2f} | Time: {episode_time:.1f}s")
             else:
+<<<<<<< Updated upstream
                 print(f"Episode {episode} | Reward: {episode_reward:.2f} | Time: {episode_time:.1f}s (warmup)")
         
         if WANDB_AVAILABLE:
@@ -310,10 +403,18 @@ def train(env_name="CarRacing-v3", algo="vpg", max_episodes=1000,
         
         # Save less frequently to reduce I/O overhead
         if episode % 50 == 0 and episode > 0:
+=======
+                print(f"Episode {episode} | Reward: {episode_reward:.2f}")
+
+        if WANDB_AVAILABLE:
+            wandb.log(log_dict)
+
+        if episode % 10 == 0:
+>>>>>>> Stashed changes
             agent.save_model(f"./models/{algo}_{episode}.pth")
-    
-    # Save final model
+
     print(f"\nTraining complete! Saving final model...")
+<<<<<<< Updated upstream
     agent.save_model(f"./models/{algo}_{max_episodes-1}_final.pth")
     
     if algo == "sac":
@@ -331,13 +432,18 @@ def train(env_name="CarRacing-v3", algo="vpg", max_episodes=1000,
             print(f"Final running avg Q loss: {np.mean(running_q_loss):.4f}")
             print(f"Final alpha: {running_alpha[-1]:.4f}")
     
+=======
+    agent.save_model(f"./models/{algo}_{max_episodes - 1}_final.pth")
+
+>>>>>>> Stashed changes
     if WANDB_AVAILABLE:
         wandb.finish()
-    
+
     env.close()
 
 
 if __name__ == "__main__":
+<<<<<<< Updated upstream
     # Check for WandB API key
     if WANDB_AVAILABLE:
         wandb_api_key = os.getenv("WANDB_API_KEY")
@@ -361,3 +467,14 @@ if __name__ == "__main__":
     
     # Option 4: Standard approach (update every step) - slowest but most stable
     # train(algo="sac", max_episodes=1000, update_frequency=1, updates_per_step=1)
+=======
+    if WANDB_AVAILABLE:
+        wandb_api_key = os.getenv("WANDB_API_KEY")
+        if not wandb_api_key:
+            raise ValueError("WANDB_API_KEY is not set")
+
+    os.makedirs("./models", exist_ok=True)
+
+    print("\n--- Testing SAC for 100 episodes ---")
+    train(algo="sac", max_episodes=100)
+>>>>>>> Stashed changes

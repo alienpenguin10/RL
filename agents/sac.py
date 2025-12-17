@@ -7,8 +7,16 @@ import numpy as np
 import torch.nn.functional as F
 
 
+<<<<<<< Updated upstream
 class SACAgent(BaseAgent):
     def __init__(self, action_dim, batch_size=256, warmup_factor=1.0,  # FIXED: warmup_factor to 1.0
+=======
+REPLAY_BUFFER_SIZE = 100000
+
+
+class SACAgent(BaseAgent):
+    def __init__(self, action_dim, batch_size=256, warmup_count=10000,
+>>>>>>> Stashed changes
                  policy_lr=3e-4, q_lr=3e-4, policy_weight_decay=1e-4,
                  q_weight_decay=1e-4, gamma=0.99, tau=0.005, alpha=0.1,  # FIXED: tau to 0.005
                  buffer_capacity=1000000):  # ADDED: buffer_capacity parameter
@@ -20,8 +28,9 @@ class SACAgent(BaseAgent):
         self.tau = tau
         self.alpha = alpha
 
+        self.replay_buffer = ReplayBuffer(capacity=REPLAY_BUFFER_SIZE)
         self.batch_size = batch_size
-        self.warmup_factor = warmup_factor
+        self.warmup_count = warmup_count
 
         # REMOVED: actor_update_frequency (update every step now)
         self.update_counter = 0  # Track update iterations
@@ -83,12 +92,21 @@ class SACAgent(BaseAgent):
     
     def clear_memory(self):
         """Resets the replay buffer by creating a new instance, discarding old transitions"""
+<<<<<<< Updated upstream
         self.replay_buffer = ReplayBuffer(capacity=1000000)
 
     def select_action(self, state):
         state_tensor = self.preprocess_state(state)
         action, log_prob = self.policy_network.step_new(state_tensor)
         return action.squeeze(0).cpu().detach().numpy(), log_prob.detach()
+=======
+        self.replay_buffer = ReplayBuffer(capacity=REPLAY_BUFFER_SIZE)
+
+    def select_action(self, state):
+        state_tensor = self.preprocess_state(state)
+        action, log_prob = self.policy_network.step(state_tensor)
+        return action.squeeze(0).detach().cpu().numpy(), log_prob.detach(), None
+>>>>>>> Stashed changes
 
     def store_transition(self, state, action, reward, next_state, done, value=None):
         """
@@ -98,6 +116,7 @@ class SACAgent(BaseAgent):
         self.replay_buffer.push(state, action, reward, next_state, done)
 
     def update(self):
+<<<<<<< Updated upstream
         if len(self.replay_buffer) < self.batch_size:
             return None
 
@@ -112,10 +131,26 @@ class SACAgent(BaseAgent):
         actions = torch.FloatTensor(np.array(actions)).to(self.device)
         rewards = torch.FloatTensor(rewards).to(self.device)
         dones = torch.FloatTensor(dones).to(self.device)
+=======
+        # If not enough samples in buffer, skip update
+        if len(self.replay_buffer) < self.warmup_count:
+            return
+
+        alpha = self.log_alpha.exp()
+
+        states, actions, rewards, next_states, dones = self.replay_buffer.sample(self.batch_size)
+
+        states = states.to(self.device)
+        next_states = next_states.to(self.device)
+        actions = actions.to(self.device)
+        rewards = rewards.to(self.device)
+        dones = dones.to(self.device)
+>>>>>>> Stashed changes
 
         # === Q-NETWORK UPDATE ===
         # Compute target for Q functions
         with torch.no_grad():
+<<<<<<< Updated upstream
             next_actions, next_log_probs = self.policy_network.step_new(next_states)
             qf1_next = self.q_net_1_target(next_states, next_actions)
             qf2_next = self.q_net_2_target(next_states, next_actions)
@@ -151,6 +186,42 @@ class SACAgent(BaseAgent):
         
         # === ALPHA (Temperature) UPDATE ===
         alpha_loss = -(self.log_alpha * (log_prob.detach() + self.target_entropy)).mean()
+=======
+            next_actions, next_log_probs = self.policy_network.step(next_states)
+            q1_next = self.q_net_1_target(next_states, next_actions)
+            q2_next = self.q_net_2_target(next_states, next_actions)
+            q_next = torch.min(q1_next, q2_next) - alpha * next_log_probs  # SAC Target = value - entropy
+
+            q_target = rewards + self.gamma * (1 - dones) * q_next  # Bellman target
+
+        q_1_loss = ((self.q_net_1(states, actions) - q_target) ** 2).mean()
+        q_2_loss = ((self.q_net_2(states, actions) - q_target) ** 2).mean()
+
+        self.q_optim_1.zero_grad()
+        q_1_loss.backward()
+        torch.nn.utils.clip_grad_norm_(self.q_net_1.parameters(), max_norm=1.0)
+        self.q_optim_1.step()
+
+        self.q_optim_2.zero_grad()
+        q_2_loss.backward()
+        torch.nn.utils.clip_grad_norm_(self.q_net_2.parameters(), max_norm=1.0)
+        self.q_optim_2.step()
+
+        # Policy Update
+        new_actions, log_probs = self.policy_network.step(states)
+        q1_new = self.q_net_1(states, new_actions)
+        q2_new = self.q_net_2(states, new_actions)
+        q_new = torch.min(q1_new, q2_new)
+
+        # Objective for the actor
+        policy_loss = (alpha * log_probs - q_new).mean()
+        self.policy_optimiser.zero_grad()
+        policy_loss.backward()
+        torch.nn.utils.clip_grad_norm_(self.policy_network.parameters(), max_norm=1.0)
+        self.policy_optimiser.step()
+
+        alpha_loss = -(self.log_alpha * (log_probs + self.target_entropy).detach()).mean()
+>>>>>>> Stashed changes
         self.alpha_optim.zero_grad()
         alpha_loss.backward()
         self.alpha_optim.step()
@@ -191,7 +262,11 @@ class SACAgent(BaseAgent):
             'q_optimiser_1_state_dict': self.q_optim_1.state_dict(),
             'q_optimiser_2_state_dict': self.q_optim_2.state_dict(),
             'log_alpha': self.log_alpha,
+<<<<<<< Updated upstream
             'alpha': self.alpha,
+=======
+            'alpha_optim_state_dict': self.alpha_optim.state_dict(),
+>>>>>>> Stashed changes
         }, filepath)
 
     def load_model(self, filepath):
@@ -204,6 +279,11 @@ class SACAgent(BaseAgent):
         self.policy_optimiser.load_state_dict(checkpoint['policy_optimiser_state_dict'])
         self.q_optim_1.load_state_dict(checkpoint['q_optimiser_1_state_dict'])
         self.q_optim_2.load_state_dict(checkpoint['q_optimiser_2_state_dict'])
+<<<<<<< Updated upstream
         if 'log_alpha' in checkpoint:
             self.log_alpha = checkpoint['log_alpha']
             self.alpha = checkpoint['alpha']
+=======
+        self.log_alpha = checkpoint['log_alpha']
+        self.alpha_optim.load_state_dict(checkpoint['alpha_optim_state_dict'])
+>>>>>>> Stashed changes
