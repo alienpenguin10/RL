@@ -4,6 +4,8 @@ Same architecture as REINFORCE, adapted for VPG usage
 """
 import torch
 import torch.nn as nn
+import numpy as np
+from torch.distributions import Normal
 
 # Remove global device check, handled in Agent
 
@@ -31,10 +33,27 @@ class PolicyNetwork(nn.Module):
         self.brake_mean = nn.Linear(64, 1)  
         self.brake_log_std = nn.Linear(64, 1) 
 
-        # Constants for log_std clamping
-        # This is used to prevent the log_std from becoming too large or too small
-        self.LOG_STD_MIN = -20
-        self.LOG_STD_MAX = 2
+        # Weights
+        torch.nn.init.orthogonal_(self.fc1.weight, np.sqrt(2))
+        torch.nn.init.orthogonal_(self.fc2.weight, np.sqrt(2))
+        torch.nn.init.orthogonal_(self.steering_mean.weight, 0.01)
+        torch.nn.init.orthogonal_(self.gas_mean.weight, 0.01)
+        torch.nn.init.orthogonal_(self.brake_mean.weight, 0.01)
+        
+        # Biases
+        self.fc1.bias.data.fill_(0)
+        self.fc2.bias.data.fill_(0)
+        self.steering_mean.bias.data.fill_(0)
+
+        # CRITICAL: Initialize Gas/Brake bias to -2.0
+        # Tanh(-2.0) = -0.96. 
+        # RemapWrapper maps -0.96 -> ~0.02 (almost 0 gas/brake)
+        # This prevents the "driving with parking brake on" problem.
+        self.gas_mean.bias.data.fill_(-2.0)
+        self.brake_mean.bias.data.fill_(-2.0)
+        
+        self.LOG_STD_MIN = -3.0
+        self.LOG_STD_MAX = 0.0
 
     def forward(self, x):
         # Normalize pixel values to [0, 1]
@@ -47,9 +66,12 @@ class PolicyNetwork(nn.Module):
         x = torch.relu(self.fc2(x))
         
         # ALL heads use Tanh
-        steering_mean = torch.tanh(self.steering_mean(x))
-        gas_mean = torch.tanh(self.gas_mean(x))
-        brake_mean = torch.tanh(self.brake_mean(x))
+        # steering_mean = torch.tanh(self.steering_mean(x))
+        # gas_mean = torch.tanh(self.gas_mean(x))
+        # brake_mean = torch.tanh(self.brake_mean(x))
+        steering_mean = self.steering_mean(x) 
+        gas_mean = self.gas_mean(x)
+        brake_mean = self.brake_mean(x)
 
         # Policy Log Stds
         steering_log_std = torch.clamp(self.steering_log_std(x), self.LOG_STD_MIN, self.LOG_STD_MAX)
@@ -89,13 +111,15 @@ class PolicyNetwork(nn.Module):
         # action[0] = steering ∈ [-1, 1]    (left/right turn)
         # action[1] = gas ∈ [-1, 1]         (remapped later)
         # action[2] = brake ∈ [-1, 1]       (remapped later)
-        action[:, 0] = torch.clamp(action[:, 0], -1, 1)   # Steering: [-1, 1]
-        action[:, 1] = torch.clamp(action[:, 1], -1, 1)   # Gas: [-1, 1]
-        action[:, 2] = torch.clamp(action[:, 2], -1, 1)   # Brake: [-1, 1]
+        #action[:, 0] = torch.clamp(action[:, 0], -1, 1)   # Steering: [-1, 1]
+        #action[:, 1] = torch.clamp(action[:, 1], -1, 1)   # Gas: [-1, 1]
+        #action[:, 2] = torch.clamp(action[:, 2], -1, 1)   # Brake: [-1, 1]
 
         # action:(batch_size, 3) = [[steering, gas, brake]]
         # log_prob:(batch_size,) = [total_log_prob]
+        # Return the raw action [-inf, inf]
         return action, log_prob
+        
 
     def step_new(self, state):
         """SAC action sampling with tanh squashing and log-prob correction"""
@@ -164,6 +188,38 @@ class PolicyNetwork(nn.Module):
         log_probs = dist.log_prob(actions).sum(dim=1) # log_probs:(batch_size,) = [total_log_prob] = [log_prob_steering + log_prob_gas + log_prob_brake] = [log(Normal(0.2, 0.223).pdf(steering_raw)) + log(Normal(0.7, 0.135).pdf(gas_raw)) + log(Normal(0.1, 0.050).pdf(brake_raw))]
         
         return log_probs
+
+    def get_action_and_log_prob(self, state, action=None):
+        """
+        Computes action and log_prob handling the Tanh transformation correctly.
+        """
+        means, log_stds = self.forward(state)
+        stds = torch.exp(log_stds)
+        
+        # Base distribution (Gaussian)
+        normal = Normal(means, stds)
+        
+        if action is None:
+            # Sampling phase
+            raw_action = normal.rsample() # Reparameterization trick
+        else:
+            # Training phase: We have the squashed action, we need to recover raw?
+            # Actually, standard PPO practice with Tanh is usually to store the 
+            # RAW (unsquashed) action in the buffer to make log_prob calc easier.
+            # But since we stored squashed or raw? 
+            # Let's assume we pass RAW actions here (see ppo.py update below).
+            raw_action = action
+
+        # Squash action
+        squashed_action = torch.tanh(raw_action)
+        
+        # --- FIX 2: Tanh Log-Prob Correction ---
+        # log(pi(a)) = log(pi(u)) - sum(log(1 - tanh(u)^2))
+        log_prob = normal.log_prob(raw_action).sum(dim=1)
+        correction = (2 * (np.log(2) - raw_action - torch.nn.functional.softplus(-2 * raw_action))).sum(dim=1)
+        log_prob -= correction
+
+        return squashed_action, raw_action, log_prob
 
 class ValueNetwork(nn.Module):
     def __init__(self):
