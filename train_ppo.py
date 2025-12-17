@@ -42,12 +42,13 @@ def train(env_name="CarRacing-v3", algo="vpg", max_train_iters=1000):
     env = gym.make(env_name, continuous=True, render_mode=None)
     env = ProcessedFrame(env)
     env = ActionRemapWrapper(env)
-    env = FrameStack(env, num_frames=4, skip_frames=2)
-  
+    env = FrameStack(env, num_frames=5, skip_frames=0)
+
     # Buffer size: how many steps to collect before each update
     buffer_size = 2048  # Standard PPO uses 2048
     batch_size = 64   # Mini-batch size for updates (smaller batch sizes often generalise better)
-    agent = PPOAgent(state_dim=(4, 84, 96), learning_rate=0.0003, clip_ratio=0.2, mini_batch_size=batch_size, buffer_size=buffer_size)
+    observation_dim = env.observation_space.shape
+    agent = PPOAgent(state_dim=observation_dim, learning_rate=0.0003, clip_ratio=0.2, entropy_coef=0.03, vf_lr=0.00005, mini_batch_size=batch_size, buffer_size=buffer_size)
     
         
     print(f"Training {algo} on {env_name} using device: {agent.device}")
@@ -67,11 +68,11 @@ def train(env_name="CarRacing-v3", algo="vpg", max_train_iters=1000):
     
     # Register signal handler for graceful shutdown
     signal.signal(signal.SIGINT, save_on_interrupt)
-    state, _ = env.reset()
     steps = 0
     max_steps = max_train_iters
 
     while steps < max_steps:
+        state, _ = env.reset()
         episode = 0
         episode_steps = 0
         episode_reward = 0
@@ -159,4 +160,4 @@ if __name__ == "__main__":
     #train(algo="vpg", max_episodes=3000)
         
     # print("\n--- Testing PPO for 3000 episodes ---")
-    train(algo="ppo", max_train_iters=1000000)
+    train(algo="ppo", max_train_iters=100000)

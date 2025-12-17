@@ -17,13 +17,14 @@ import torch.optim as optim
 import os
 
 class PPOAgent(BaseAgent):
-    def __init__(self, state_dim=(3, 96, 96), action_dim=3, learning_rate=0.0003, vf_lr=0.001, gamma=0.99, lam=0.97, clip_ratio=0.2, target_k1=0.01, entropy_coef=0.01, mini_batch_size=128, train_pi_iters=10, train_v_iters=40, buffer_size=2048):
+    def __init__(self, state_dim=(3, 96, 96), action_dim=3, learning_rate=0.0003, vf_lr=0.001, gamma=0.99, lam=0.97, clip_ratio=0.2, target_k1=0.01, entropy_coef=0.01, entropy_decay=1, mini_batch_size=128, train_pi_iters=10, train_v_iters=40, buffer_size=2048):
         super().__init__(learning_rate, gamma)
         self.vf_lr = vf_lr
         self.lam = lam
         self.clip_ratio = clip_ratio
         self.target_k1 = target_k1
         self.entropy_coef = entropy_coef
+        self.entropy_decay = entropy_decay
         self.mini_batch_size = mini_batch_size
         self.train_pi_iters = train_pi_iters
         self.train_v_iters = train_v_iters
@@ -33,8 +34,8 @@ class PPOAgent(BaseAgent):
         self.rollout_buffer = RolloutBuffer(buffer_size=buffer_size, state_dim=state_dim, action_dim=action_dim, device=self.device, gamma=gamma, lam=lam)
 
         # Initialize networks and move to device
-        self.policy_network = PolicyNetwork().to(self.device)
-        self.value_network = ValueNetwork().to(self.device)
+        self.policy_network = PolicyNetwork(num_frames=state_dim[0]).to(self.device)
+        self.value_network = ValueNetwork(num_frames=state_dim[0]).to(self.device)
 
         # Optimizers
         self.policy_optimizer = optim.Adam(self.policy_network.parameters(), lr=learning_rate)
@@ -56,7 +57,7 @@ class PPOAgent(BaseAgent):
         """Wrapper to finish the path in the buffer"""
         self.rollout_buffer.finish_path(last_val)
 
-    def compute_loss_pi(self, states, actions, advantages, log_probs_old):
+    def compute_loss_pi(self, states, actions, advantages, log_probs_old, training_step=None):
         
         # 1. Get current log_probs from the policy for the states and actions we saw
         # We need to manually recreate the distribution logic here or add a method to PolicyNetwork
@@ -76,7 +77,13 @@ class PPOAgent(BaseAgent):
 
         # 4. Calculate PPO Loss (Maximize objective -> Minimize negative objective)
         entropy = dist.entropy().sum(dim=1).mean()
-        loss_pi = -(torch.min(surr1, surr2).mean() + self.entropy_coef * entropy)
+        if self.entropy_decay < 1 and training_step is not None:
+            # Decay entropy coefficient over training steps
+            entropy_coef = self.entropy_coef * (self.entropy_decay ** training_step)
+        else:
+            entropy_coef = self.entropy_coef
+        
+        loss_pi = -(torch.min(surr1, surr2).mean() + entropy_coef * entropy)
         
         # # Useful extra info (Approximate KL Divergence for early stopping)
         # http://joschu.net/blog/kl-approx.html
@@ -85,7 +92,7 @@ class PPOAgent(BaseAgent):
 
         return loss_pi, approx_kl, entropy
 
-    def update(self):
+    def update(self, training_step=None):
         data = self.rollout_buffer.get()
         states, actions, advantages, log_probs_old, values, returns = data['states'], data['actions'], data['advantages'], data['log_probs'], data['values'], data['returns']
 
@@ -108,7 +115,7 @@ class PPOAgent(BaseAgent):
                 
                 self.policy_optimizer.zero_grad()
         
-                loss_pi, approx_kl, entropy = self.compute_loss_pi(batch_states, batch_actions, batch_adv, batch_log_probs_old)
+                loss_pi, approx_kl, entropy = self.compute_loss_pi(batch_states, batch_actions, batch_adv, batch_log_probs_old, training_step)
                 loss_pi.backward()
                 torch.nn.utils.clip_grad_norm_(self.policy_network.parameters(), max_norm=0.5)
                 self.policy_optimizer.step()

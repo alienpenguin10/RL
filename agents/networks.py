@@ -8,9 +8,9 @@ import torch.nn as nn
 # Remove global device check, handled in Agent
 
 class PolicyNetwork(nn.Module):
-    def __init__(self):
+    def __init__(self, num_frames=4):
         super().__init__()
-        self.convnet = ConvNet_StackedFrames(num_frames=4)
+        self.convnet = ConvNet_StackedFrames(num_frames=num_frames)
         # ConvNet output: 256 channels * 4 * 4 spatial = 4096
         self.fc1 = nn.Linear(256 * 4 * 4, 512)
         self.fc2 = nn.Linear(512, 64)
@@ -166,9 +166,9 @@ class PolicyNetwork(nn.Module):
         return log_probs
 
 class ValueNetwork(nn.Module):
-    def __init__(self):
+    def __init__(self, num_frames=4):
         super().__init__()
-        self.convnet = ConvNet_StackedFrames(num_frames=4)
+        self.convnet = ConvNet_StackedFrames(num_frames=num_frames)
         # ConvNet output: 256 channels * 4 * 4 spatial = 4096
         self.fc1 = nn.Linear(256 * 4 * 4, 512)
         self.fc2 = nn.Linear(512, 64)
