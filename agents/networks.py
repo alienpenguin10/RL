@@ -60,7 +60,7 @@ class ConvNet(nn.Module):
         return F.relu(self.fc(x))
     
 class PolicyNetwork(nn.Module):
-    def __init__(self, obs_shape, action_dim, feature_dim=512, hidden_dims=[256, 256], log_std_min=-20, log_std_max=2, action_low=None, action_high=None):
+    def __init__(self, obs_shape, action_dim, feature_dim=512, hidden_dims=[256, 256], log_std_min=-20, log_std_max=2):
         super().__init__()
         self.log_std_min = log_std_min
         self.log_std_max = log_std_max
@@ -68,14 +68,6 @@ class PolicyNetwork(nn.Module):
         self.mean_net = MLP(feature_dim, hidden_dims, action_dim)
         self.log_std_net = MLP(feature_dim, hidden_dims, action_dim)
         self.action_dim = action_dim
-        
-        assert action_low is not None and action_high is not None, "Must provide action_low and action_high"
-        self.register_buffer(
-            "action_scale", torch.tensor((action_high - action_low) / 2.0, dtype=torch.float32)
-        )
-        self.register_buffer(
-            "action_bias", torch.tensor((action_high + action_low) / 2.0, dtype=torch.float32)
-        )
 
     def forward(self, x):
         output = self.cnn(x)
@@ -84,20 +76,18 @@ class PolicyNetwork(nn.Module):
         return mean, log_std
 
     def step(self, state, deterministic=False):
+
         means, log_stds = self.forward(state)
         stds = torch.exp(log_stds)
 
         if deterministic:
-            action = torch.tanh(means) * self.action_scale + self.action_bias
-            return action, None, None
+            return torch.tanh(means), None, None
 
         normal = torch.distributions.Normal(means, stds)
         x_t = normal.rsample()
-        y_t = torch.tanh(x_t)
-        action = y_t * self.action_scale + self.action_bias
-
+        action = torch.tanh(x_t)
         log_prob = normal.log_prob(x_t)
-        log_prob -= torch.log(self.action_scale * (1 - y_t.pow(2)) + 1e-6)
+        log_prob -= torch.log(1 - action.pow(2) + 1e-6)
         log_prob = log_prob.sum(dim=-1, keepdim=True)
         entropy = normal.entropy().sum(dim=-1)
         
