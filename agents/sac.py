@@ -9,10 +9,10 @@ import torch.nn.functional as F
 
 
 class SACAgent(BaseAgent):
-    def __init__(self, obs_dim, action_dim, batch_size=256, warmup_factor=1.0,  # FIXED: warmup_factor to 1.0
+    def __init__(self, obs_dim, action_dim, batch_size=256, warmup_factor=1.0,
                  policy_lr=3e-4, q_lr=3e-4, policy_weight_decay=1e-4,
-                 q_weight_decay=1e-4, gamma=0.99, tau=0.005, alpha=0.1,  # FIXED: tau to 0.005
-                 buffer_capacity=1000000):  # ADDED: buffer_capacity parameter
+                 q_weight_decay=1e-4, gamma=0.99, tau=0.005, alpha=0.1,
+                 buffer_capacity=1000000):
         super().__init__(learning_rate=policy_lr, gamma=gamma)
 
         self.replay_buffer = ReplayBuffer(capacity=buffer_capacity)
@@ -33,7 +33,9 @@ class SACAgent(BaseAgent):
         self.alpha_optim = torch.optim.Adam([self.log_alpha], lr=policy_lr)        
 
         # ACTOR
-        self.policy_network = PolicyNetwork(obs_dim, action_dim).to(self.device)
+        action_low = np.array([-1.0, 0.0, 0.0], dtype=np.float32)
+        action_high = np.array([1.0, 1.0, 1.0], dtype=np.float32)
+        self.policy_network = PolicyNetwork(obs_dim, action_dim, action_low=action_low, action_high=action_high).to(self.device)
         self.policy_optimiser = torch.optim.Adam(
             self.policy_network.parameters(), 
             lr=policy_lr,
