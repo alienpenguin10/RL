@@ -27,30 +27,27 @@ except ImportError:
     print("wandb not available - training will continue without logging")
 
 
-def train_sac_stepwise(
-    env_name="CarRacing-v3",
-    max_timesteps=1_000_000,
-    start_steps=10000,
-    checkpoint_interval=50000,
-    use_grayscale=True,
-    use_frame_stack=True,
-    record_video=False,           # ADD THIS
-    video_folder="./videos",      # ADD THIS
-    video_interval=10,            # ADD THIS
-):
+def train_sac_stepwise(config):
+    # Extract config values
+    env_name = config['env_id']
+    max_timesteps = config['max_timesteps']
+    start_steps = config['start_steps']
+    checkpoint_interval = config['checkpoint_interval']
+    use_grayscale = config['use_grayscale']
+    use_frame_stack = config['use_frame_stack']
+    n_stack = config.get('n_stack', 4)
+    log_freq = config['log_freq']
+    max_ep_len = config['max_ep_len']
+    record_video = config.get('record_video', False)
+    video_folder = config.get('video_folder', './videos')
+    video_interval = config.get('video_interval', 10)
+    
     # Initialize WandB if available
     if WANDB_AVAILABLE:
         wandb.init(
-            project="rl-training",
-            name=f"sac-stepwise-{env_name}",
-            config={
-                "algorithm": "sac",
-                "environment": env_name,
-                "max_timesteps": max_timesteps,
-                "start_steps": start_steps,
-                "grayscale": use_grayscale,
-                "frame_stack": use_frame_stack,
-            }
+            project=config.get('project_name', 'rl-training'),
+            name=config.get('run_name', f"sac-{env_name}"),
+            config=config
         )
 
     # Create TRAINING environment (no video recording)
@@ -59,7 +56,7 @@ def train_sac_stepwise(
     if use_grayscale and use_frame_stack:
         env = PreprocessCarRacing(env, resize=(84, 84))
         env = RepeatAction(env, skip=4)
-        env = FrameStack(env, num_stack=4)
+        env = FrameStack(env, num_stack=n_stack)
     
     # Create EVALUATION environment (with video recording)
     eval_env = gym.make(env_name, continuous=True, render_mode="rgb_array" if record_video else None)
@@ -78,7 +75,7 @@ def train_sac_stepwise(
     if use_grayscale and use_frame_stack:
         eval_env = PreprocessCarRacing(eval_env, resize=(84, 84))
         eval_env = RepeatAction(eval_env, skip=4)
-        eval_env = FrameStack(eval_env, num_stack=4)
+        eval_env = FrameStack(eval_env, num_stack=n_stack)
 
 
     print(f"Environment observation shape: {env.observation_space.shape}")
@@ -88,12 +85,29 @@ def train_sac_stepwise(
     action_dim = env.action_space.shape[0]
     
     print(obs_dim)
-    # Initialize agent
-    agent = SACAgent(obs_dim=obs_dim, action_dim=action_dim)
+    # Initialize agent with config parameters
+    agent = SACAgent(
+        obs_dim=obs_dim,
+        action_dim=action_dim,
+        batch_size=config['batch_size'],
+        gamma=config['gamma'],
+        tau=config['tau'],
+        alpha=config['alpha'],
+        policy_lr=config['learning_rate'],
+        q_lr=config['learning_rate'],
+        # hidden_dims=config['hidden_dims'],
+        # buffer_size=config['buffer_size'],
+        # device=config.get('device', 'cuda'),
+        # automatic_entropy_tuning=config['automatic_entropy_tuning']
+    )
+    
     batch_size = agent.batch_size
+    train_freq = config['train_freq']
+    gradient_steps = config['gradient_steps']
     
     print(f"Training with batch size: {batch_size}")
     print(f"Device: {agent.device}")
+    print(f"Train frequency: {train_freq}, Gradient steps: {gradient_steps}")
 
     # Track current step for graceful shutdown
     current_step = [0]
@@ -115,7 +129,6 @@ def train_sac_stepwise(
     obs, _ = env.reset()
     episode_reward = 0
     episode_rewards_history = []
-    log_freq = 1000  # Log training progress every N steps
     last_log_step = 0
     episode_steps = 0
     episode_num = 0
@@ -130,14 +143,14 @@ def train_sac_stepwise(
     print(f"Warmup period: {start_steps:,} steps\n")
 
     # fill buffer
-    if len(agent.replay_buffer) > 0:
-        print(f"[BUFFER] Prefilling buffer ({len(agent.replay_buffer)} steps)...")
+    if start_steps > 0:
+        print(f"[BUFFER] Prefilling buffer ({start_steps} steps)...")
         prefill_rewards = []
         prefill_episode_reward = 0
         prefill_episode_count = 0
-        log_interval = max(len(agent.replay_buffer) // 10, 1000)  # Log 10 times during prefill
+        log_interval = max(start_steps // 10, 1000)  # Log 10 times during prefill
         
-        for prefill_step in range(len(agent.replay_buffer)):
+        for prefill_step in range(start_steps):
             action = env.action_space.sample()
             next_obs, reward, term, trunc, _ = env.step(action)
             agent.replay_buffer.push(obs, action, reward, next_obs, term or trunc)
@@ -153,10 +166,10 @@ def train_sac_stepwise(
             
             # Progress logging
             if (prefill_step + 1) % log_interval == 0:
-                progress = 100 * (prefill_step + 1) / len(agent.replay_buffer)
+                progress = 100 * (prefill_step + 1) / start_steps
                 buffer_size = len(agent.replay_buffer)
                 avg_reward = np.mean(prefill_rewards) if prefill_rewards else 0
-                print(f"  [{progress:5.1f}%] Step {prefill_step+1:,}/{len(agent.replay_buffer):,} | "
+                print(f"  [{progress:5.1f}%] Step {prefill_step+1:,}/{start_steps:,} | "
                       f"Buffer: {buffer_size:,} | Episodes: {prefill_episode_count} | "
                       f"Avg Reward: {avg_reward:.2f}")
         
@@ -169,7 +182,11 @@ def train_sac_stepwise(
         current_step[0] = total_steps
         
         # Select action: random during warmup, policy after
-        action = agent.select_action(obs, deterministic=False)
+        if total_steps < start_steps:
+            action = env.action_space.sample()
+        else:
+            action = agent.select_action(obs, deterministic=False)
+            
         next_obs, reward, terminated, truncated, _ = env.step(action)
         done = terminated or truncated
 
@@ -191,15 +208,15 @@ def train_sac_stepwise(
         # Training update logic
         buffer_full = len(agent.replay_buffer) >= batch_size
         
-        if buffer_full:
+        if buffer_full and total_steps >= start_steps and total_steps % train_freq == 0:
             metrics = None
-            # for _ in range(gradient_steps):
-            metrics = agent.update()
+            for _ in range(gradient_steps):
+                metrics = agent.update()
             if metrics and WANDB_AVAILABLE:
                 wandb.log({f'train/{k}': v for k, v in metrics.items()}, step=total_steps)
 
         # Handle episode end
-        if done:
+        if done or episode_steps >= max_ep_len:
             episode_num += 1
             episode_rewards_history.append(episode_reward)
             
@@ -243,7 +260,7 @@ def train_sac_stepwise(
                 eval_reward = 0
                 eval_steps = 0
                 
-                while not eval_done and eval_steps < 1000:
+                while not eval_done and eval_steps < max_ep_len:
                     eval_action = agent.select_action(eval_obs, deterministic=True)
                     eval_obs, eval_r, eval_term, eval_trunc, _ = eval_env.step(eval_action)
                     eval_done = eval_term or eval_trunc
@@ -301,15 +318,10 @@ if __name__ == "__main__":
     os.makedirs("./models", exist_ok=True)
     
     print("\n--- Training SAC with step-based updates ---")
+    print(f"Configuration: {args.config}")
+    print(f"Environment: {config['env_id']}")
+    print(f"Max timesteps: {config['max_timesteps']:,}")
+    print(f"Batch size: {config['batch_size']}")
+    print(f"Learning rate: {config['learning_rate']}")
     
-    train_sac_stepwise(
-        env_name=config['env_id'],
-        max_timesteps=config['max_timesteps'],
-        start_steps=config['start_steps'],
-        checkpoint_interval=config['checkpoint_interval'],
-        use_grayscale=config['use_grayscale'],
-        use_frame_stack=config['use_frame_stack'],
-        record_video=config.get('record_video', False),
-        video_folder=config.get('video_folder', './videos'),
-        video_interval=config.get('video_interval', 10)
-    )
+    train_sac_stepwise(config)
