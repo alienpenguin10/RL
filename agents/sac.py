@@ -9,7 +9,7 @@ import torch.nn.functional as F
 
 
 class SACAgent(BaseAgent):
-    def __init__(self, obs_dim, action_dim, batch_size=256, warmup_factor=1.0,
+    def __init__(self, obs_dim, action_dim, batch_size=256,
                  policy_lr=3e-4, q_lr=3e-4, policy_weight_decay=1e-4,
                  q_weight_decay=1e-4, alpha_lr=3e-4, alpha_weight_decay=1e-4,
                  gamma=0.99, tau=0.005, alpha=0.1, buffer_capacity=1000000):
@@ -21,7 +21,6 @@ class SACAgent(BaseAgent):
         self.alpha = alpha
 
         self.batch_size = batch_size
-        self.warmup_factor = warmup_factor
 
         # entropy target based on action_dim (CarRacing: action_dim = 3 -> target_entropy = -3)
         self.target_entropy = -float(action_dim)
@@ -161,6 +160,10 @@ class SACAgent(BaseAgent):
             'entropy': -log_prob.mean().item(),
             'q1_mean': qf_1.mean().item(),
             'q2_mean': qf_2.mean().item(),
+            'q_optim_1_lr': self.q_optim_1.param_groups[0]['lr'],
+            'q_optim_2_lr': self.q_optim_2.param_groups[0]['lr'],
+            'policy_optim_lr': self.policy_optimiser.param_groups[0]['lr'],
+            'alpha_optim_lr': self.alpha_optim.param_groups[0]['lr'],
         }
 
     def _soft_update_networks(self, source, target):

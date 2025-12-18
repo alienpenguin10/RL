@@ -4,6 +4,7 @@
 env_id: CarRacing-v3
 use_grayscale: true
 use_frame_stack: true
+use_repeat_action: false
 n_stack: 4
 
 # Training settings

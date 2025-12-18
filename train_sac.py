@@ -34,6 +34,7 @@ def train_sac_stepwise(config):
     start_steps = config['start_steps']
     checkpoint_interval = config['checkpoint_interval']
     use_grayscale = config['use_grayscale']
+    use_repeat_action = config['use_repeat_action']
     use_frame_stack = config['use_frame_stack']
     n_stack = config.get('n_stack', 4)
     log_freq = config['log_freq']
@@ -52,10 +53,18 @@ def train_sac_stepwise(config):
 
     # Create TRAINING environment (no video recording)
     env = gym.make(env_name, continuous=True)
+
+    print("Environment Configuration:")
+    print(f"  Use Grayscale: {use_grayscale}")
+    print(f"  Use Frame Stack: {use_frame_stack} (n_stack={n_stack})")
+    print(f"  Use Repeat Action: {use_repeat_action}\n")
     
     if use_grayscale and use_frame_stack:
         env = PreprocessCarRacing(env, resize=(84, 84))
-        env = RepeatAction(env, skip=4)
+
+        if use_repeat_action:
+            env = RepeatAction(env, skip=n_stack)
+
         env = FrameStack(env, num_stack=n_stack)
     
     # Create EVALUATION environment (with video recording)
@@ -74,7 +83,10 @@ def train_sac_stepwise(config):
     
     if use_grayscale and use_frame_stack:
         eval_env = PreprocessCarRacing(eval_env, resize=(84, 84))
-        eval_env = RepeatAction(eval_env, skip=4)
+
+        if use_repeat_action:
+            eval_env = RepeatAction(eval_env, skip=n_stack)
+
         eval_env = FrameStack(eval_env, num_stack=n_stack)
 
 
@@ -217,7 +229,7 @@ def train_sac_stepwise(config):
                 wandb.log({f'train/{k}': v for k, v in metrics.items()}, step=total_steps)
 
         # Handle episode end
-        if done or episode_steps >= max_ep_len:
+        if done:
             episode_num += 1
             episode_rewards_history.append(episode_reward)
             
