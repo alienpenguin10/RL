@@ -21,7 +21,7 @@ load_dotenv()
 
 
 class PendulumAgent:
-    def __init__(self, state_dim, action_dim, device='cpu', gamma=0.99, lam=0.95, entropy_coef=0.01, entropy_decay=1.0, clip_ratio=0.2, pi_lr=0.001, vf_lr=0.001, buffer_size=1000, train_pi_iters=10, train_vf_iters=10, mini_batch_size=64):
+    def __init__(self, state_dim, action_dim, device='cpu', std=1.5, gamma=0.99, lam=0.95, entropy_coef=0.01, entropy_decay=1.0, clip_ratio=0.2, pi_lr=0.001, vf_lr=0.001, buffer_size=1000, train_pi_iters=10, train_vf_iters=10, mini_batch_size=64):
         self.device = device
 
         self.policy_network = NNetwork(3, 1).to(device)
@@ -41,7 +41,7 @@ class PendulumAgent:
         self.entropy_decay = entropy_decay
         self.clip_ratio = clip_ratio
         # use fixed std
-        self.std = torch.diag(torch.full(size=(1,), fill_value=0.5)).to(device)
+        self.std = torch.diag(torch.full(size=(1,), fill_value=std)).to(device)
 
     def select_action(self, state):
         state_tensor = torch.FloatTensor(state).squeeze().unsqueeze(0).unsqueeze(0).to(self.device)
@@ -97,7 +97,7 @@ class PendulumAgent:
 
         # Policy Update
         for _ in range(self.train_pi_iters):
-            np.random.shuffle(indices)
+            # np.random.shuffle(indices)
 
             for start in range(0, dataset_size, self.mini_batch_size):
                 end = start + self.mini_batch_size
@@ -118,7 +118,7 @@ class PendulumAgent:
         vf_loss_total = 0
         vf_loss_count = 0
         for _ in range(self.train_vf_iters):
-            np.random.shuffle(indices)
+            # np.random.shuffle(indices)
             for start in range(0, dataset_size, self.mini_batch_size):
                 end = start + self.mini_batch_size
                 idx = indices[start:end]
@@ -128,9 +128,12 @@ class PendulumAgent:
                 
                 self.value_optimizer.zero_grad()
                 v_pred = self.value_network(batch_states).squeeze(-1)
-                vf_loss = nn.MSELoss()(v_pred, batch_returns)
+                v_pred_clipped = values[idx] + torch.clamp(v_pred - values[idx], -self.clip_ratio, self.clip_ratio)
+                vf_loss1 = (batch_returns - v_pred).pow(2)
+                vf_loss2 = (batch_returns - v_pred_clipped).pow(2)
+                vf_loss = torch.min(vf_loss1, vf_loss2).mean()
                 vf_loss.backward()
-                torch.nn.utils.clip_grad_norm_(self.value_network.parameters(), 4.0)
+                torch.nn.utils.clip_grad_norm_(self.value_network.parameters(), 2.0)
                 self.value_optimizer.step()
                 
                 vf_loss_total += vf_loss.item()
@@ -149,19 +152,24 @@ class PendulumAgent:
             save_dict['value_network'] = self.value_network.state_dict()
         torch.save(save_dict, filepath)
 
+
 """ Hyperparameters """
 env_name = 'Pendulum-v1'
-num_training_steps = 500000
-batch_size = 100
-buffer_size = 2000
-pi_lr = 0.001
-vf_lr = 0.001
-entropy_coef = 0.05
+
+num_training_steps = 200000
+mini_batch_size = 128
+buffer_size = 2048
+pi_lr = 0.0001
+vf_lr = 0.0001
+entropy_coef = 0.08
 entropy_decay = 0.99999
 clip_ratio = 0.2
-train_vf_iters = 3
-train_pi_iters = 5
-mini_batch_size = 64
+train_vf_iters = 8
+train_pi_iters = 8
+gamma = 0.99
+lam = 0.95
+std = 1.5
+
 
 def train(max_train_iters=100, save_checkpoints=True):# Initialize WandB if available
     if WANDB_AVAILABLE:
@@ -172,7 +180,12 @@ def train(max_train_iters=100, save_checkpoints=True):# Initialize WandB if avai
                 "algorithm": "ppo",
                 "environment": env_name,
                 "max_episodes": max_train_iters,
-                "learning_rate": pi_lr,
+                "mini_batch_size": mini_batch_size,
+                "buffer_size": buffer_size,
+                "pi_learning_rate": pi_lr,
+                "vf_learning_rate": vf_lr,
+                "policy_train_iters": train_pi_iters,
+                "value_function_train_iters": train_vf_iters,
             }
         )
     
@@ -182,7 +195,7 @@ def train(max_train_iters=100, save_checkpoints=True):# Initialize WandB if avai
     action_dim = env.action_space.shape[0]
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-    agent = PendulumAgent(state_dim, action_dim, device, pi_lr=pi_lr, vf_lr=vf_lr, entropy_coef=entropy_coef, entropy_decay=entropy_decay, clip_ratio=clip_ratio, buffer_size=buffer_size, train_pi_iters=train_pi_iters, train_vf_iters=train_vf_iters, mini_batch_size=mini_batch_size)
+    agent = PendulumAgent(state_dim, action_dim, device, std=std, gamma=gamma, lam=lam, pi_lr=pi_lr, vf_lr=vf_lr, entropy_coef=entropy_coef, entropy_decay=entropy_decay, clip_ratio=clip_ratio, buffer_size=buffer_size, train_pi_iters=train_pi_iters, train_vf_iters=train_vf_iters, mini_batch_size=mini_batch_size)
 
     # Track current episode for saving on interrupt
     current_episode = [0]  # Use list to allow modification in nested function
@@ -236,7 +249,7 @@ def train(max_train_iters=100, save_checkpoints=True):# Initialize WandB if avai
                 # Buffer is full but episode not done: Bootstrap!
                 # We need the value of the current 'state' (which is actually next_state of the last step)
                 _, _, last_val = agent.select_action(state)
-                agent.finish_path(last_val=last_val)
+                agent.finish_path(last_value=last_val)
 
         # 2. Update after buffer is full
         loss = agent.update()
