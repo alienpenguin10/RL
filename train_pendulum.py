@@ -131,7 +131,8 @@ class PendulumAgent:
                 v_pred_clipped = values[idx] + torch.clamp(v_pred - values[idx], -self.clip_ratio, self.clip_ratio)
                 vf_loss1 = (batch_returns - v_pred).pow(2)
                 vf_loss2 = (batch_returns - v_pred_clipped).pow(2)
-                vf_loss = torch.min(vf_loss1, vf_loss2).mean()
+                vf_loss = torch.max(vf_loss1, vf_loss2).mean()
+                # vf_loss = nn.MSELoss()(v_pred, batch_returns)
                 vf_loss.backward()
                 torch.nn.utils.clip_grad_norm_(self.value_network.parameters(), 2.0)
                 self.value_optimizer.step()
@@ -154,21 +155,22 @@ class PendulumAgent:
 
 
 """ Hyperparameters """
+model_name = "ppo_pendulum8"
 env_name = 'Pendulum-v1'
 
-num_training_steps = 100000
+num_training_steps = 500000
 mini_batch_size = 512
 buffer_size = 4096
-pi_lr = 0.0001
+pi_lr = 0.0002
 vf_lr = 0.0001
 entropy_coef = 0.08
-entropy_decay = 0.99999
-clip_ratio = 0.3
-train_vf_iters = 3
-train_pi_iters = 5
+entropy_decay = 0.9999
+clip_ratio = 0.1
+train_vf_iters = 2
+train_pi_iters = 4
 gamma = 0.99
 lam = 0.95
-std = 1.5
+std = 1.0
 
 
 def train(max_train_iters=100, save_checkpoints=False):
@@ -190,6 +192,10 @@ def train(max_train_iters=100, save_checkpoints=False):
             }
         )
     
+    num_checkpoints = 4
+    checkpoint_interval = num_training_steps // num_checkpoints
+    checkpoint = 0
+
     env = gym.make(env_name)
 
     state_dim = env.observation_space.shape[0]
@@ -204,8 +210,8 @@ def train(max_train_iters=100, save_checkpoints=False):
     def save_on_interrupt(signum, frame):
         """Save model when interrupted (Ctrl+C)"""
         print(f"\n\nInterrupted! Saving model from episode {current_episode[0]}...")
-        agent.save_model(f"./models/ppo_pendulum1_{current_episode[0]}_interrupted.pth")
-        print(f"Model saved to ./models/ppo_pendulum1_{current_episode[0]}_interrupted.pth")
+        agent.save_model(f"./models/{model_name}_{current_episode[0]}_interrupted.pth")
+        print(f"Model saved to ./models/{model_name}_{current_episode[0]}_interrupted.pth")
         if WANDB_AVAILABLE:
             wandb.finish()
         env.close()
@@ -228,7 +234,10 @@ def train(max_train_iters=100, save_checkpoints=False):
             next_state, reward, terminated, truncated, _ = env.step(np.array([action]))
             done = terminated or truncated
 
-            agent.store_transition(state, action, reward, log_prob, value, done)
+            """ Scale reward to a smaller range for stability """
+            scaled_reward = reward / 10.0  # Scale reward [-16, 0] -> [-1.6, 0]
+
+            agent.store_transition(state, action, scaled_reward, log_prob, value, done)
             state = next_state
             steps += 1
             episode_reward += reward
@@ -268,12 +277,13 @@ def train(max_train_iters=100, save_checkpoints=False):
         if WANDB_AVAILABLE:
             wandb.log(log_dict)
 
-        if save_checkpoints and (steps % 10000 == 1):
-            agent.save_model(f"./models/ppo_pendulum1_{steps}_checkpoint.pth")
+        if save_checkpoints and (steps >= checkpoint):
+            agent.save_model(f"./models/{model_name}_{steps}_checkpoint.pth")
+            checkpoint += checkpoint_interval
     
     # Save final model
     print(f"\nTraining complete! Saving final model...")
-    agent.save_model(f"./models/ppo_pendulum1_{max_train_iters-1}_final.pth")
+    agent.save_model(f"./models/{model_name}_{max_train_iters-1}_final.pth")
     
     if WANDB_AVAILABLE:
         wandb.finish()
