@@ -156,16 +156,16 @@ class PendulumAgent:
 """ Hyperparameters """
 env_name = 'Pendulum-v1'
 
-num_training_steps = 200000
-mini_batch_size = 128
-buffer_size = 2048
+num_training_steps = 100000
+mini_batch_size = 512
+buffer_size = 4096
 pi_lr = 0.0001
 vf_lr = 0.0001
 entropy_coef = 0.08
 entropy_decay = 0.99999
-clip_ratio = 0.2
-train_vf_iters = 8
-train_pi_iters = 8
+clip_ratio = 0.3
+train_vf_iters = 3
+train_pi_iters = 5
 gamma = 0.99
 lam = 0.95
 std = 1.5
@@ -268,7 +268,7 @@ def train(max_train_iters=100, save_checkpoints=False):
         if WANDB_AVAILABLE:
             wandb.log(log_dict)
 
-        if save_checkpoints and (steps % 10000 == 0):
+        if save_checkpoints and (steps % 10000 == 1):
             agent.save_model(f"./models/ppo_pendulum1_{steps}_checkpoint.pth")
     
     # Save final model
@@ -290,4 +290,4 @@ if __name__ == "__main__":
     # Ensure models directory exists
     os.makedirs("./models", exist_ok=True)
     
-    train(max_train_iters=num_training_steps, save_checkpoints=False)
+    train(max_train_iters=num_training_steps, save_checkpoints=True)
