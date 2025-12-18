@@ -7,7 +7,12 @@ class BaseAgent:
         self.learning_rate = learning_rate
         self.gamma = gamma
         # Detect device here to be used by all children
-        self.device = torch.device("cuda" if torch.cuda.is_available() else "mps")
+        if torch.backends.mps.is_available():
+            self.device = torch.device("mps")
+        elif torch.cuda.is_available():
+            self.device = torch.device("cuda")
+        else:
+            self.device = torch.device("cpu")
         
         self.clear_memory()
 
