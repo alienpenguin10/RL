@@ -18,7 +18,12 @@ gamma: 0.99
 tau: 0.005
 alpha: 0.2
 automatic_entropy_tuning: true
-learning_rate: 0.0003
+policy_learning_rate: 0.0003
+q_learning_rate: 0.0003
+alpha_learning_rate: 0.0003
+policy_weight_decay: 0.0001
+q_weight_decay: 0.0001
+alpha_weight_decay: 0.0001
 
 # Network architecture
 hidden_dims: [256, 256]
@@ -33,10 +38,7 @@ gradient_steps: 1  # Number of gradient updates per training step
 # Episode settings
 max_ep_len: 1000
 
-# Device
-device: cuda  # or 'cuda' or 'cpu'
-
 # Logging
 project_name: rl-training
 run_name: sac-carracing-v3
-record_video: True
+record_video: false

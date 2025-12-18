@@ -9,13 +9,13 @@ import torch.nn.functional as F
 
 
 class SACAgent(BaseAgent):
-    def __init__(self, obs_dim, action_dim, batch_size=256, warmup_factor=1.0,  # FIXED: warmup_factor to 1.0
+    def __init__(self, obs_dim, action_dim, batch_size=256, warmup_factor=1.0,
                  policy_lr=3e-4, q_lr=3e-4, policy_weight_decay=1e-4,
-                 q_weight_decay=1e-4, gamma=0.99, tau=0.005, alpha=0.1,  # FIXED: tau to 0.005
-                 buffer_capacity=1000000):  # ADDED: buffer_capacity parameter
-        super().__init__(learning_rate=policy_lr, gamma=gamma)
-
+                 q_weight_decay=1e-4, alpha_lr=3e-4, alpha_weight_decay=1e-4,
+                 gamma=0.99, tau=0.005, alpha=0.1, buffer_capacity=1000000):
         self.replay_buffer = ReplayBuffer(capacity=buffer_capacity)
+
+        super().__init__(learning_rate=policy_lr, gamma=gamma)
 
         self.tau = tau
         self.alpha = alpha
@@ -30,7 +30,7 @@ class SACAgent(BaseAgent):
             requires_grad=True,
             device=self.device,
         )
-        self.alpha_optim = torch.optim.Adam([self.log_alpha], lr=policy_lr)        
+        self.alpha_optim = torch.optim.Adam([self.log_alpha], lr=alpha_lr, weight_decay=alpha_weight_decay)
 
         # ACTOR
         self.policy_network = PolicyNetwork(obs_dim, action_dim).to(self.device)
@@ -80,7 +80,7 @@ class SACAgent(BaseAgent):
     
     def clear_memory(self):
         """Resets the replay buffer by creating a new instance, discarding old transitions"""
-        self.replay_buffer = ReplayBuffer(capacity=1000000)
+        self.replay_buffer = ReplayBuffer(capacity=self.replay_buffer.capacity)
 
     def select_action(self, state, deterministic=False):
         state_tensor = torch.as_tensor(state, dtype=torch.float32, device=self.device).unsqueeze(0)
@@ -89,7 +89,7 @@ class SACAgent(BaseAgent):
         # print(action.cpu().numpy()[0].astype(np.float32))
         return action.cpu().numpy()[0].astype(np.float32)
 
-    def store_transition(self, state, action, reward, next_state, done, value=None):
+    def store_transition(self, state, action, reward, next_state, log_prob, done, value=None):
         """
         Store Experience in replay buffer
         """
@@ -138,7 +138,6 @@ class SACAgent(BaseAgent):
         self.policy_optimiser.step()
         
         # === ALPHA (Temperature) UPDATE ===
-        alpha_loss = torch.tensor(0.0, device=self.device)
         alpha_loss = -(self.log_alpha * (log_prob.detach() + self.target_entropy)).mean()
         self.alpha_optim.zero_grad()
         alpha_loss.backward()

@@ -83,8 +83,7 @@ def train_sac_stepwise(config):
     
     obs_dim = env.observation_space.shape
     action_dim = env.action_space.shape[0]
-    
-    print(obs_dim)
+
     # Initialize agent with config parameters
     agent = SACAgent(
         obs_dim=obs_dim,
@@ -93,12 +92,14 @@ def train_sac_stepwise(config):
         gamma=config['gamma'],
         tau=config['tau'],
         alpha=config['alpha'],
-        policy_lr=config['learning_rate'],
-        q_lr=config['learning_rate'],
+        policy_lr=config['policy_learning_rate'],
+        q_lr=config['q_learning_rate'],
+        alpha_lr=config['alpha_learning_rate'],
+        policy_weight_decay=config['policy_weight_decay'],
+        q_weight_decay=config['q_weight_decay'],
+        alpha_weight_decay=config['alpha_weight_decay'],
         # hidden_dims=config['hidden_dims'],
         # buffer_size=config['buffer_size'],
-        # device=config.get('device', 'cuda'),
-        # automatic_entropy_tuning=config['automatic_entropy_tuning']
     )
     
     batch_size = agent.batch_size
@@ -116,7 +117,7 @@ def train_sac_stepwise(config):
         """Save model when interrupted (Ctrl+C)"""
         print(f"\n\nInterrupted! Saving model at step {current_step[0]}...")
         agent.save_model(f"./models/sac_step_{current_step[0]}_interrupted.pth")
-        print(f"Model saved!")
+        print("Model saved!")
         if WANDB_AVAILABLE:
             wandb.finish()
         env.close()
@@ -190,7 +191,7 @@ def train_sac_stepwise(config):
         next_obs, reward, terminated, truncated, _ = env.step(action)
         done = terminated or truncated
 
-        agent.store_transition(obs, action, reward, next_obs, done)
+        agent.store_transition(obs, action, reward, next_obs, None, done)
 
         # Log actions periodically
         if WANDB_AVAILABLE and total_steps % 100 == 0:
@@ -322,6 +323,7 @@ if __name__ == "__main__":
     print(f"Environment: {config['env_id']}")
     print(f"Max timesteps: {config['max_timesteps']:,}")
     print(f"Batch size: {config['batch_size']}")
-    print(f"Learning rate: {config['learning_rate']}")
+    print(f"Start steps: {config['start_steps']:,}\n")
+    print(f"Learning Rates - Policy: {config['policy_learning_rate']}, Q-function: {config['q_learning_rate']}, Alpha: {config['alpha_learning_rate']}\n")
     
     train_sac_stepwise(config)
