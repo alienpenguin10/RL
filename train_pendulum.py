@@ -171,7 +171,8 @@ lam = 0.95
 std = 1.5
 
 
-def train(max_train_iters=100, save_checkpoints=True):# Initialize WandB if available
+def train(max_train_iters=100, save_checkpoints=False):
+    # Initialize WandB if available
     if WANDB_AVAILABLE:
         wandb.init(
             project="rl-training",
@@ -203,8 +204,8 @@ def train(max_train_iters=100, save_checkpoints=True):# Initialize WandB if avai
     def save_on_interrupt(signum, frame):
         """Save model when interrupted (Ctrl+C)"""
         print(f"\n\nInterrupted! Saving model from episode {current_episode[0]}...")
-        agent.save_model(f"./models/ppo_pendulum_{current_episode[0]}_interrupted.pth")
-        print(f"Model saved to ./models/ppo_pendulum_{current_episode[0]}_interrupted.pth")
+        agent.save_model(f"./models/ppo_pendulum1_{current_episode[0]}_interrupted.pth")
+        print(f"Model saved to ./models/ppo_pendulum1_{current_episode[0]}_interrupted.pth")
         if WANDB_AVAILABLE:
             wandb.finish()
         env.close()
@@ -267,12 +268,12 @@ def train(max_train_iters=100, save_checkpoints=True):# Initialize WandB if avai
         if WANDB_AVAILABLE:
             wandb.log(log_dict)
 
-        if save_checkpoints:
-            agent.save_model(f"./models/ppo_pendulum_{steps}_checkpoint.pth")
+        if save_checkpoints and (steps % 10000 == 0):
+            agent.save_model(f"./models/ppo_pendulum1_{steps}_checkpoint.pth")
     
     # Save final model
     print(f"\nTraining complete! Saving final model...")
-    agent.save_model(f"./models/ppo_pendulum_{max_train_iters-1}_final.pth")
+    agent.save_model(f"./models/ppo_pendulum1_{max_train_iters-1}_final.pth")
     
     if WANDB_AVAILABLE:
         wandb.finish()
@@ -289,4 +290,4 @@ if __name__ == "__main__":
     # Ensure models directory exists
     os.makedirs("./models", exist_ok=True)
     
-    train(max_train_iters=num_training_steps)
+    train(max_train_iters=num_training_steps, save_checkpoints=False)
