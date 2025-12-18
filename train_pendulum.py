@@ -21,7 +21,7 @@ load_dotenv()
 
 
 class PendulumAgent:
-    def __init__(self, state_dim, action_dim, device='cpu', gamma=0.99, lam=0.95, entropy_coef=0.01, entropy_decay=1.0, clip_ratio=0.2, pi_lr=0.001, vf_lr=0.001, buffer_size=1000, train_pi_iters=10, train_v_iters=10, mini_batch_size=64):
+    def __init__(self, state_dim, action_dim, device='cpu', gamma=0.99, lam=0.95, entropy_coef=0.01, entropy_decay=1.0, clip_ratio=0.2, pi_lr=0.001, vf_lr=0.001, buffer_size=1000, train_pi_iters=10, train_vf_iters=10, mini_batch_size=64):
         self.device = device
 
         self.policy_network = NNetwork(3, 1).to(device)
@@ -33,7 +33,7 @@ class PendulumAgent:
         self.rollout_buffer = RolloutBuffer(buffer_size=buffer_size, state_dim=state_dim, action_dim=action_dim, device=device, gamma=gamma, lam=lam)
 
         self.train_pi_iters = train_pi_iters
-        self.train_v_iters = train_v_iters
+        self.train_vf_iters = train_vf_iters
         self.mini_batch_size = mini_batch_size
         self.gamma = gamma
         self.lam = lam
@@ -115,7 +115,9 @@ class PendulumAgent:
                 self.policy_optimizer.step()
 
         # Value Update
-        for _ in range(self.train_v_iters):
+        vf_loss_total = 0
+        vf_loss_count = 0
+        for _ in range(self.train_vf_iters):
             np.random.shuffle(indices)
             for start in range(0, dataset_size, self.mini_batch_size):
                 end = start + self.mini_batch_size
@@ -130,8 +132,11 @@ class PendulumAgent:
                 vf_loss.backward()
                 torch.nn.utils.clip_grad_norm_(self.value_network.parameters(), 4.0)
                 self.value_optimizer.step()
+                
+                vf_loss_total += vf_loss.item()
+                vf_loss_count += 1
 
-        return pi_loss.item(), vf_loss.item()
+        return pi_loss.item(), vf_loss_total / vf_loss_count
     
     def save_model(self, filepath):
         """
@@ -149,11 +154,14 @@ env_name = 'Pendulum-v1'
 num_training_steps = 500000
 batch_size = 100
 buffer_size = 2000
-pi_lr = 0.0001
-vf_lr = 0.0001
+pi_lr = 0.001
+vf_lr = 0.001
 entropy_coef = 0.05
 entropy_decay = 0.99999
 clip_ratio = 0.2
+train_vf_iters = 3
+train_pi_iters = 5
+mini_batch_size = 64
 
 def train(max_train_iters=100, save_checkpoints=True):# Initialize WandB if available
     if WANDB_AVAILABLE:
@@ -174,7 +182,7 @@ def train(max_train_iters=100, save_checkpoints=True):# Initialize WandB if avai
     action_dim = env.action_space.shape[0]
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-    agent = PendulumAgent(state_dim, action_dim, device, pi_lr=pi_lr, vf_lr=vf_lr, entropy_coef=entropy_coef, entropy_decay=entropy_decay, clip_ratio=clip_ratio, buffer_size=buffer_size)
+    agent = PendulumAgent(state_dim, action_dim, device, pi_lr=pi_lr, vf_lr=vf_lr, entropy_coef=entropy_coef, entropy_decay=entropy_decay, clip_ratio=clip_ratio, buffer_size=buffer_size, train_pi_iters=train_pi_iters, train_vf_iters=train_vf_iters, mini_batch_size=mini_batch_size)
 
     # Track current episode for saving on interrupt
     current_episode = [0]  # Use list to allow modification in nested function
