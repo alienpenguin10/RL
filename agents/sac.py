@@ -21,7 +21,6 @@ class SACAgent(BaseAgent):
         self.alpha = alpha
 
         self.batch_size = batch_size
-        self.warmup_factor = warmup_factor
 
         # entropy target based on action_dim (CarRacing: action_dim = 3 -> target_entropy = -3)
         self.target_entropy = -float(action_dim)
@@ -32,10 +31,7 @@ class SACAgent(BaseAgent):
         )
         self.alpha_optim = torch.optim.Adam([self.log_alpha], lr=alpha_lr, weight_decay=alpha_weight_decay)
 
-        # ACTOR
-        action_low = np.array([-1.0, 0.0, 0.0], dtype=np.float32)
-        action_high = np.array([1.0, 1.0, 1.0], dtype=np.float32)
-        self.policy_network = PolicyNetwork(obs_dim, action_dim, action_low=action_low, action_high=action_high).to(self.device)
+        self.policy_network = PolicyNetwork(obs_dim, action_dim).to(self.device)
         self.policy_optimiser = torch.optim.Adam(
             self.policy_network.parameters(), 
             lr=policy_lr,
@@ -140,7 +136,6 @@ class SACAgent(BaseAgent):
         self.policy_optimiser.step()
         
         # === ALPHA (Temperature) UPDATE ===
-        alpha_loss = torch.tensor(0.0, device=self.device)
         alpha_loss = -(self.log_alpha * (log_prob.detach() + self.target_entropy)).mean()
         self.alpha_optim.zero_grad()
         alpha_loss.backward()
