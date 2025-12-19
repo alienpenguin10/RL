@@ -1,50 +1,61 @@
-import numpy as np
 import torch
+import numpy as np
+
 
 class ReplayBuffer:
-    def __init__(self, capacity=100_000, obs_shape=(4, 84, 84), action_dim=3, is_image=True):
+    def __init__(self, capacity=1_000_000, obs_shape=None, action_dim=None):
         self.capacity = capacity
-        self.is_image = is_image
-        self.size = 0
         self.ptr = 0
+        self.size = 0
 
-        self.obs = np.zeros((capacity, *obs_shape), dtype=np.uint8 if is_image else np.float32)
-        self.next_obs = np.zeros((capacity, *obs_shape), dtype=np.uint8 if is_image else np.float32)
-        self.actions = np.zeros((capacity, action_dim), dtype=np.float32)
-        self.rewards = np.zeros((capacity, 1), dtype=np.float32)
-        self.dones = np.zeros((capacity, 1), dtype=np.float32)
+        self._obs_shape = obs_shape
+        self._action_dim = action_dim
+        self._initialized = False
 
-    def push(self, state, action, reward, next_state, done):
-        if self.is_image:
-            self.obs[self.ptr] = (state * 255).astype(np.uint8)
-            self.next_obs[self.ptr] = (next_state * 255).astype(np.uint8)
-        else:
-            self.obs[self.ptr] = state
-            self.next_obs[self.ptr] = next_state
+        if obs_shape is not None and action_dim is not None:
+            self._initialize_buffers(obs_shape, action_dim)
+
+    def _initialize_buffers(self, obs_shape, action_dim):
+        self.obs = np.zeros((self.capacity, *obs_shape), dtype=np.float32)
+        self.actions = np.zeros((self.capacity, action_dim), dtype=np.float32)
+        self.rewards = np.zeros((self.capacity, 1), dtype=np.float32)
+        self.next_obs = np.zeros((self.capacity, *obs_shape), dtype=np.float32)
+        self.dones = np.zeros((self.capacity, 1), dtype=np.float32)
+        self._initialized = True
+
+    def push(self, obs, action, reward, next_obs, done):
+        if not self._initialized:
+            obs_shape = obs.shape
+            action_dim = action.shape[0] if hasattr(action, 'shape') else len(action)
+            self._initialize_buffers(obs_shape, action_dim)
+
+        self.obs[self.ptr] = obs
         self.actions[self.ptr] = action
         self.rewards[self.ptr] = reward
-        self.dones[self.ptr] = done
+        self.next_obs[self.ptr] = next_obs
+        self.dones[self.ptr] = float(done)
 
         self.ptr = (self.ptr + 1) % self.capacity
         self.size = min(self.size + 1, self.capacity)
 
     def sample(self, batch_size, device):
-        idxs = np.random.randint(0, self.size, batch_size)
-        obs_batch = self.obs[idxs]
-        next_obs_batch = self.next_obs[idxs]
+        idxs = np.random.randint(0, self.size, size=batch_size)
 
-        if self.is_image:
-            obs_batch = obs_batch.astype(np.float32) / 255.0
-            next_obs_batch = next_obs_batch.astype(np.float32) / 255.0
+        use_pin_memory = device.type == 'cuda' if hasattr(device, 'type') else 'cuda' in str(device)
 
-        batch = {
-            'obs': torch.as_tensor(obs_batch, dtype=torch.float32, device=device),
-            'actions': torch.as_tensor(self.actions[idxs], dtype=torch.float32, device=device),
-            'rewards': torch.as_tensor(self.rewards[idxs], dtype=torch.float32, device=device),
-            'next_obs': torch.as_tensor(next_obs_batch, dtype=torch.float32, device=device),
-            'dones': torch.as_tensor(self.dones[idxs], dtype=torch.float32, device=device)
+        def to_tensor(arr):
+            tensor = torch.from_numpy(arr)
+            if use_pin_memory:
+                tensor = tensor.pin_memory()
+            return tensor.to(device, non_blocking=use_pin_memory)
+
+        return {
+            'obs': to_tensor(self.obs[idxs]),
+            'actions': to_tensor(self.actions[idxs]),
+            'rewards': to_tensor(self.rewards[idxs]),
+            'next_obs': to_tensor(self.next_obs[idxs]),
+            'dones': to_tensor(self.dones[idxs]),
         }
-        return batch
 
     def __len__(self):
         return self.size

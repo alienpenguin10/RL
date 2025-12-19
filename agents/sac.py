@@ -12,7 +12,8 @@ class SACAgent(BaseAgent):
     def __init__(self, obs_dim, action_dim, batch_size=256,
                  policy_lr=3e-4, q_lr=3e-4, policy_weight_decay=1e-4,
                  q_weight_decay=1e-4, alpha_lr=3e-4, alpha_weight_decay=1e-4,
-                 gamma=0.99, tau=0.005, alpha=0.1, buffer_capacity=1000000):
+                 gamma=0.99, tau=0.005, alpha=0.1, buffer_capacity=1000000,
+                 q_hidden_dims=[256, 256], policy_hidden_dims=[256, 256]):
         self.replay_buffer = ReplayBuffer(capacity=buffer_capacity)
 
         super().__init__(learning_rate=policy_lr, gamma=gamma)
@@ -31,7 +32,7 @@ class SACAgent(BaseAgent):
         )
         self.alpha_optim = torch.optim.Adam([self.log_alpha], lr=alpha_lr, weight_decay=alpha_weight_decay)
 
-        self.policy_network = PolicyNetwork(obs_dim, action_dim).to(self.device)
+        self.policy_network = PolicyNetwork(obs_dim, action_dim, hidden_dims=policy_hidden_dims).to(self.device)
         self.policy_optimiser = torch.optim.Adam(
             self.policy_network.parameters(), 
             lr=policy_lr,
@@ -39,16 +40,16 @@ class SACAgent(BaseAgent):
         )
 
         # 2 CRITICS
-        self.q_net_1 = QNetwork(obs_dim, action_dim).to(self.device)
-        self.q_net_1_target = QNetwork(obs_dim, action_dim).to(self.device)
+        self.q_net_1 = QNetwork(obs_dim, action_dim, hidden_dims=q_hidden_dims).to(self.device)
+        self.q_net_1_target = QNetwork(obs_dim, action_dim, hidden_dims=q_hidden_dims).to(self.device)
         self.q_optim_1 = torch.optim.Adam(
             self.q_net_1.parameters(), 
             lr=q_lr,
             weight_decay=q_weight_decay
         )
 
-        self.q_net_2 = QNetwork(obs_dim, action_dim).to(self.device)
-        self.q_net_2_target = QNetwork(obs_dim, action_dim).to(self.device)
+        self.q_net_2 = QNetwork(obs_dim, action_dim, hidden_dims=q_hidden_dims).to(self.device)
+        self.q_net_2_target = QNetwork(obs_dim, action_dim, hidden_dims=q_hidden_dims).to(self.device)
         self.q_optim_2 = torch.optim.Adam(
             self.q_net_2.parameters(), 
             lr=q_lr,

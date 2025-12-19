@@ -154,35 +154,3 @@ class QNetwork(nn.Module):
         """Takes both state and action"""
         features = self.cnn(state)
         return self.net(torch.cat([features, action], dim=-1))
-    
-
-# class QNetwork(nn.Module):
-#     def __init__(self, obs_shape, action_dim, feature_dim=512, hidden_dims=[256, 256]):
-#         super().__init__()
-        
-#         # Use the same ConvNet as PolicyNetwork/ValueNetwork
-#         self.convnet = ConvNet(obs_shape, feature_dim)
-#         self.net = MLP(feature_dim + action_dim, hidden_dims, 1)
-        
-#         # ConvNet output: 256 * 2 * 2 = 1024
-#         self.flatten_size = 256 * 2 * 2
-        
-#         # Fully connected layers (state features + action)
-#         self.fc1 = nn.Linear(self.flatten_size + action_dim, 512)
-#         self.fc2 = nn.Linear(512, 1)
-    
-#     def forward(self, state, action):
-#         """Takes both state and action"""
-#         # Normalize state
-#         state = state.float() / 255.0
-        
-#         # Process through ConvNet
-#         x = self.convnet(state)
-#         x = x.view(x.size(0), -1)  # Flatten: (batch, 1024)
-        
-#         # Concatenate with action
-#         x = torch.cat([x, action], dim=1)  # (batch, 1024 + action_dim)
-        
-#         x = torch.relu(self.fc1(x))
-#         q_value = self.fc2(x)
-#         return q_value

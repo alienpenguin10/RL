@@ -3,6 +3,7 @@ import gymnasium as gym
 import numpy as np
 from gymnasium import Wrapper, ObservationWrapper
 from collections import deque
+from gymnasium import spaces
 
 class PreprocessCarRacing(ObservationWrapper):
     def __init__(self, env, resize=(84, 84)):
@@ -77,3 +78,42 @@ class RepeatAction(gym.Wrapper):
         total_reward = max(total_reward, -5.0)
         
         return obs, total_reward, term, trunc, info
+
+
+class ThrottleActionWrapper(gym.ActionWrapper):
+    def __init__(self, env):
+        super().__init__(env)
+
+        self.action_space = spaces.Box(
+            low=np.array([-1.0, -1.0], dtype=np.float32),
+            high=np.array([1.0, 1.0], dtype=np.float32),
+            shape=(2,),
+            dtype=np.float32
+        )
+
+    def action(self, action):
+        steering = np.clip(action[0], -1.0, 1.0)
+        throttle = np.clip(action[1], -1.0, 1.0)
+
+        if throttle >= 0:
+            gas = throttle
+            brake = 0.0
+        else:
+            gas = 0.0
+            brake = -throttle
+
+        return np.array([steering, gas, brake], dtype=np.float32)
+
+    def reverse_action(self, action):
+        steering = action[0]
+        gas = action[1]
+        brake = action[2]
+
+        if gas > brake:
+            throttle = gas
+        elif brake > gas:
+            throttle = -brake
+        else:
+            throttle = 0.0
+
+        return np.array([steering, throttle], dtype=np.float32)
