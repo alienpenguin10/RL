@@ -8,6 +8,7 @@ from agents.networks import ConvNet, ConvNet_StackedFrames
 from env_wrapper import ProcessedFrame, FrameStack, ActionRemapWrapper
 import signal
 import sys
+import os
 # Try to import wandb (optional)
 try:
     import wandb
@@ -39,7 +40,14 @@ class ActorCritic(nn.Module):
             nn.Tanh(),
             layer_init(nn.Linear(64, 1), std=1.0),
         )
-        self.actor = nn.Sequential(
+        self.actor_steer = nn.Sequential(
+            layer_init(nn.Linear(conv_size, 64)),
+            nn.Tanh(),
+            layer_init(nn.Linear(64, 64)),
+            nn.Tanh(),
+            layer_init(nn.Linear(64, output_shape), std=0.01),
+        )
+        self.actor_speed = nn.Sequential(
             layer_init(nn.Linear(conv_size, 64)),
             nn.Tanh(),
             layer_init(nn.Linear(64, 64)),
@@ -65,15 +73,31 @@ class ActorCritic(nn.Module):
     def get_action(self, state):
         # Takes a single state -> samples a new action from policy dist
         conv_features = self.get_obs_features(state)
-        mean = self.actor(conv_features)
-        action_logstd = self.actor_logstd.expand_as(mean)
-        std = torch.exp(action_logstd)
-        dist = torch.distributions.Normal(mean, std)
+        steer_mean = self.actor_steer(conv_features)
+        speed_mean = self.actor_speed(conv_features)
+        steer_logstd = self.actor_logstd.expand_as(steer_mean)
+        speed_logstd = self.actor_logstd.expand_as(speed_mean)
+        steer_std = torch.exp(steer_logstd)
+        speed_std = torch.exp(speed_logstd)
+        steer_dist = torch.distributions.Normal(steer_mean, steer_std)
+        speed_dist = torch.distributions.Normal(speed_mean, speed_std)
         
-        action = dist.sample()
-        log_prob = dist.log_prob(action).sum(1)
-        value = self.critic(conv_features)
-        return action.cpu().numpy().flatten(), log_prob.cpu().numpy().flatten(), value.cpu().numpy().flatten()
+        steer_action = steer_dist.sample()
+        speed_action = speed_dist.sample()
+        
+        steer = steer_action.cpu().numpy().flatten()
+        speed = speed_action.cpu().numpy().flatten()
+
+        # action = np.array([steer[0], gas[0], brake[0]])
+        action = np.array([steer[0], speed[0]])
+
+        steer_log_prob = steer_dist.log_prob(steer_action).sum(1).cpu().numpy().flatten()
+        speed_log_prob = speed_dist.log_prob(speed_action).sum(1).cpu().numpy().flatten()
+        log_prob = steer_log_prob + speed_log_prob
+
+        value = self.critic(conv_features).cpu().numpy().flatten()
+
+        return action, log_prob, value
     
     def evaluate(self, states, actions):
         # takes in batch of states and actions -> doesn't sample evaluates the log prob of specific action under the current policy
@@ -154,6 +178,23 @@ class PPOAgent:
             'entropy_loss': entropy_loss.item(),
             'total_loss': total_loss.item(),
         }
+    
+    def save_model(self, filepath):
+        """
+        Saves the model to a file
+        """
+        save_dict = {}
+        if hasattr(self, 'policy'):
+            save_dict['policy'] = self.policy.state_dict()
+        torch.save(save_dict, filepath)
+
+    def load_model(self, filepath):
+        """
+        Loads the model from a file
+        """
+        checkpoint = torch.load(filepath)
+        if hasattr(self, 'policy') and 'policy' in checkpoint:
+            self.policy.load_state_dict(checkpoint['policy'])
 
 def compute_gae(rewards, values, terminated, terminateds, next_value):
     #TD Error = r + gamma * V(s_{t+1}) - V(s_t)
@@ -179,9 +220,23 @@ def compute_gae(rewards, values, terminated, terminateds, next_value):
     returns = [adv + val for adv, val in zip(advantages, values)]
     return torch.tensor(returns).to(DEVICE), torch.tensor(advantages).to(DEVICE)
 
+def process_action(raw_action):
+    # Clip actions to be within action space bounds
+    steer = np.clip(raw_action[0], -1.0, 1.0)
+    speed = raw_action[1]
+    if speed > 0:
+        gas = np.clip(speed, 0.0, 1.0)
+        brake = 0.0
+    else:
+        gas = 0.0
+        brake = np.clip(-speed, 0.0, 1.0)
+    return np.array([steer, gas, brake])
+
 """ Hyperparameters """
 LOG_WANDB = True
+SAVE_CHECKPOINTS = False
 TOTAL_TIMESTEPS = 100000
+
 HORIZON = 2048 # One episode is 200 steps for pendulum
 NUM_UPDATES = int(TOTAL_TIMESTEPS / HORIZON) # 100000 / 2048 = 244
 NUM_EPOCHS = 5
@@ -190,7 +245,6 @@ BATCH_SIZE = HORIZON // NUM_MINIBATCHES # 2048 // 32 = 64
 FRAME_STACKING = True
 NUM_FRAMES = 5
 SKIP_FRAMES = 0
-SAVE_CHECKPOINTS = True
 CHECKPOINT_INTERVAL = TOTAL_TIMESTEPS // 5
 
 LEARNING_RATE = 3e-4
@@ -250,7 +304,8 @@ def train(env_name='CarRacing-v3', log_wandb=False):
     
     while total_steps < TOTAL_TIMESTEPS:
         states = torch.zeros((HORIZON, *env.observation_space.shape)).to(DEVICE)
-        actions = torch.zeros((HORIZON, env.action_space.shape[0])).to(DEVICE)
+        # actions = torch.zeros((HORIZON, env.action_space.shape[0])).to(DEVICE)
+        actions = torch.zeros((HORIZON, 2)).to(DEVICE)  # Only steer and speed
         rewards = torch.zeros((HORIZON)).to(DEVICE)
         terminateds = torch.zeros((HORIZON)).to(DEVICE)
         values = torch.zeros((HORIZON)).to(DEVICE)
@@ -267,10 +322,10 @@ def train(env_name='CarRacing-v3', log_wandb=False):
                 values[step] = torch.tensor(value).to(DEVICE)       
             actions[step] = torch.tensor(raw_action).to(DEVICE)
             log_probs[step] = torch.tensor(log_prob).to(DEVICE)
+            processed_action = process_action(raw_action)
 
-            clipped_action = np.clip(raw_action, -2.0, 2.0)
+            next_state, reward, terminated, truncated, info = env.step(processed_action)
 
-            next_state, reward, terminated, truncated, info = env.step(clipped_action)
             # if "episode" in info:
             #     print(f"Global Step: {total_steps}, Episode Return: {info['episode']['r']}, Length: {info['episode']['l']}")
             #     episode_rewards.append(info['episode']['r'])
@@ -333,6 +388,9 @@ def train(env_name='CarRacing-v3', log_wandb=False):
     env.close()
 
 if __name__ == '__main__':
+    # Ensure models directory exists
+    os.makedirs("./models", exist_ok=True)
+
     env_name = 'CarRacing-v3'
     log_wandb = LOG_WANDB
     train(env_name=env_name, log_wandb=log_wandb)
