@@ -4,7 +4,8 @@ import torch.nn as nn
 from torch.optim import Adam
 from torch.optim.lr_scheduler import LinearLR
 import gymnasium as gym
-from agents.networks import ConvNet
+from agents.networks import ConvNet, ConvNet_StackedFrames
+from env_wrapper import ProcessedFrame, FrameStack, ActionRemapWrapper
 # Try to import wandb (optional)
 try:
     import wandb
@@ -24,10 +25,10 @@ def layer_init(layer, std=np.sqrt(2), bias_const=0.0):
     return layer
 
 class ActorCritic(nn.Module):
-    def __init__(self, input_shape, output_shape):
+    def __init__(self, num_frames, output_shape):
         super().__init__()
         # Using Orthogonal Initialization
-        self.conv = ConvNet()
+        self.conv = ConvNet_StackedFrames(num_frames=num_frames)
         conv_size = 4096  # Output size from ConvNet (256 channels * 4 height * 4 width)
         self.critic = nn.Sequential(
             layer_init(nn.Linear(conv_size, 64)),
@@ -48,7 +49,10 @@ class ActorCritic(nn.Module):
     def get_obs_features(self, state):
         if len(state.shape) == 3:
             state = state.unsqueeze(0) # To make sure state has a batch dimension
-        state_tensor = state.permute(0, 3, 1, 2)  # Change from (B, H, W, C) to (B, C, H, W)
+        if (not FRAME_STACKING):
+            state_tensor = state.permute(0, 3, 1, 2)  # Change from (B, H, W, C) to (B, C, H, W)
+        else:
+            state_tensor = state # Frame stacking already gives (B, frames, H, W)
         features = self.conv(state_tensor).flatten(start_dim=1)
         return features
 
@@ -87,7 +91,7 @@ class PPOAgent:
     def __init__(self, env):
         self.observation_size = env.observation_space.shape[0]
         self.action_size = env.action_space.shape[0]
-        self.policy = ActorCritic(input_shape=self.observation_size, output_shape=self.action_size).to(DEVICE)
+        self.policy = ActorCritic(num_frames=NUM_FRAMES, output_shape=self.action_size).to(DEVICE)
         self.optimizer = Adam(self.policy.parameters(), lr=LEARNING_RATE)
         self.lr_scheduler = LinearLR(self.optimizer, start_factor=1.0, end_factor=0.1, total_iters=NUM_UPDATES)
     
@@ -171,12 +175,16 @@ def compute_gae(rewards, values, terminated, terminateds, next_value):
     return torch.tensor(returns).to(DEVICE), torch.tensor(advantages).to(DEVICE)
 
 """ Hyperparameters """
-TOTAL_TIMESTEPS = 100000
+LOG_WANDB = True
+TOTAL_TIMESTEPS = 20000
 HORIZON = 2048 # One episode is 200 steps for pendulum
 NUM_UPDATES = int(TOTAL_TIMESTEPS / HORIZON) # 100000 / 2048 = 244
 NUM_EPOCHS = 10
 NUM_MINIBATCHES = 32 
 BATCH_SIZE = HORIZON // NUM_MINIBATCHES # 2048 // 32 = 64
+FRAME_STACKING = True
+NUM_FRAMES = 5
+SKIP_FRAMES = 0
 
 LEARNING_RATE = 3e-4
 GAMMA = 0.99
@@ -205,6 +213,9 @@ def train(env_name='CarRacing-v3', log_wandb=False):
         )
     
     env = gym.make(f'{env_name}')
+    env = ProcessedFrame(env)
+    env = FrameStack(env, num_frames=NUM_FRAMES, skip_frames=SKIP_FRAMES)
+    env = ActionRemapWrapper(env)
     env = gym.wrappers.RecordEpisodeStatistics(env)
     agent = PPOAgent(env)
 
@@ -285,5 +296,5 @@ def train(env_name='CarRacing-v3', log_wandb=False):
 
 if __name__ == '__main__':
     env_name = 'CarRacing-v3'
-    log_wandb = True
+    log_wandb = LOG_WANDB
     train(env_name=env_name, log_wandb=log_wandb)
