@@ -6,6 +6,8 @@ from torch.optim.lr_scheduler import LinearLR
 import gymnasium as gym
 from agents.networks import ConvNet, ConvNet_StackedFrames
 from env_wrapper import ProcessedFrame, FrameStack, ActionRemapWrapper
+import signal
+import sys
 # Try to import wandb (optional)
 try:
     import wandb
@@ -94,6 +96,7 @@ class PPOAgent:
         self.policy = ActorCritic(num_frames=NUM_FRAMES, output_shape=self.action_size).to(DEVICE)
         self.optimizer = Adam(self.policy.parameters(), lr=LEARNING_RATE)
         self.lr_scheduler = LinearLR(self.optimizer, start_factor=1.0, end_factor=0.1, total_iters=NUM_UPDATES)
+        self.entropy_coef = ENTROPY_COEFF
     
     def update(self, rollouts):
         # rollouts: {'states': states, 'actions': actions, 'returns': returns, 'advantages': advantages, 'values': values, 'log_probs': log_probs}
@@ -134,14 +137,16 @@ class PPOAgent:
                 entropy_loss = entropy.mean()
 
                 # Total Loss = Policy Loss - ENTROPY_COEFF * Policy Entropy + VALUE_COEFF * Value Loss
-                total_loss = policy_loss - ENTROPY_COEFF * entropy_loss  + VALUE_COEFF * value_loss
+                if ENTROPY_DECAY < 1.0:
+                    self.entropy_coef *= ENTROPY_DECAY
+                total_loss = policy_loss - self.entropy_coef * entropy_loss  + VALUE_COEFF * value_loss
 
                 self.optimizer.zero_grad()
                 total_loss.backward()
                 torch.nn.utils.clip_grad_norm_(self.policy.parameters(), 0.5)
                 self.optimizer.step()
             
-        # self.lr_scheduler.step()
+        self.lr_scheduler.step()
 
         return {
             'policy_loss': policy_loss.item(),
@@ -176,22 +181,25 @@ def compute_gae(rewards, values, terminated, terminateds, next_value):
 
 """ Hyperparameters """
 LOG_WANDB = True
-TOTAL_TIMESTEPS = 20000
+TOTAL_TIMESTEPS = 100000
 HORIZON = 2048 # One episode is 200 steps for pendulum
 NUM_UPDATES = int(TOTAL_TIMESTEPS / HORIZON) # 100000 / 2048 = 244
-NUM_EPOCHS = 10
-NUM_MINIBATCHES = 32 
+NUM_EPOCHS = 5
+NUM_MINIBATCHES = 32
 BATCH_SIZE = HORIZON // NUM_MINIBATCHES # 2048 // 32 = 64
 FRAME_STACKING = True
 NUM_FRAMES = 5
 SKIP_FRAMES = 0
+SAVE_CHECKPOINTS = True
+CHECKPOINT_INTERVAL = TOTAL_TIMESTEPS // 5
 
 LEARNING_RATE = 3e-4
 GAMMA = 0.99
 GAE_LAMBDA = 0.95
-EPSILONS = 0.2
+EPSILONS = 0.2 # Clipping ratio for PPO
 VALUE_COEFF = 0.5
 ENTROPY_COEFF = 0.01
+ENTROPY_DECAY = 0.9999
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 def train(env_name='CarRacing-v3', log_wandb=False):
@@ -224,7 +232,21 @@ def train(env_name='CarRacing-v3', log_wandb=False):
     terminated = 0
     total_steps = 0
     update_count = 0
-    # episode_rewards = []
+    episode = 0 # Track current episode for saving on interrupt
+    checkpoint = 0
+
+    def save_on_interrupt(signum, frame):
+        """Save model when interrupted (Ctrl+C)"""
+        print(f"\n\nInterrupted! Saving model from episode {episode}...")
+        agent.save_model(f"./models/ppo_{episode}_interrupted.pth")
+        print(f"Model saved to ./models/ppo_{episode}_interrupted.pth")
+        if WANDB_AVAILABLE:
+            wandb.finish()
+        env.close()
+        sys.exit(0)
+    
+    # Register signal handler for graceful shutdown
+    signal.signal(signal.SIGINT, save_on_interrupt)
     
     while total_steps < TOTAL_TIMESTEPS:
         states = torch.zeros((HORIZON, *env.observation_space.shape)).to(DEVICE)
@@ -258,6 +280,7 @@ def train(env_name='CarRacing-v3', log_wandb=False):
             rewards[step] = torch.tensor(reward).to(DEVICE)
             if terminated or truncated:
                 next_state, _ = env.reset()
+                episode += 1
             state = torch.Tensor(next_state).to(DEVICE)
             total_steps += 1
         
@@ -293,6 +316,21 @@ def train(env_name='CarRacing-v3', log_wandb=False):
 
         if WANDB_AVAILABLE and log_wandb:
             wandb.log(log_dict)
+
+        
+        if SAVE_CHECKPOINTS and (total_steps >= checkpoint):
+            agent.save_model(f"./models/ppo_{episode}_checkpoint.pth")
+            checkpoint += CHECKPOINT_INTERVAL
+    
+    
+    # Save final model
+    print(f"\nTraining complete! Saving final model...")
+    agent.save_model(f"./models/ppo_{episode}_final.pth")
+
+    if WANDB_AVAILABLE:
+        wandb.finish()
+    
+    env.close()
 
 if __name__ == '__main__':
     env_name = 'CarRacing-v3'
