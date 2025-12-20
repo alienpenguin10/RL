@@ -4,23 +4,17 @@ import torch.nn as nn
 from torch.optim import Adam
 from torch.optim.lr_scheduler import LinearLR
 import gymnasium as gym
+# Try to import wandb (optional)
+try:
+    import wandb
+    WANDB_AVAILABLE = True
+except ImportError:
+    WANDB_AVAILABLE = False
+    print("wandb not available - training will continue without logging")
 
-
-TOTAL_TIMESTEPS = 500000
-HORIZON = 2048 # One episode is 200 steps for pendulum
-NUM_UPDATES = int(TOTAL_TIMESTEPS / HORIZON) # 100000 / 2048 = 244
-NUM_EPOCHS = 10
-NUM_MINIBATCHES = 32 
-BATCH_SIZE = HORIZON // NUM_MINIBATCHES # 2048 // 32 = 64
-
-LEARNING_RATE = 3e-4
-GAMMA = 0.99
-GAE_LAMBDA = 0.95
-EPSILONS = 0.2
-VALUE_COEFF = 0.5
-ENTROPY_COEFF = 0.01
-DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-
+# Load environment variables from .env file
+from dotenv import load_dotenv
+load_dotenv()
 
 
 def layer_init(layer, std=np.sqrt(2), bias_const=0.0):
@@ -163,8 +157,41 @@ def compute_gae(rewards, values, terminated, terminateds, next_value):
     returns = [adv + val for adv, val in zip(advantages, values)]
     return torch.tensor(returns).to(DEVICE), torch.tensor(advantages).to(DEVICE)
 
+TOTAL_TIMESTEPS = 500000
+HORIZON = 2048 # One episode is 200 steps for pendulum
+NUM_UPDATES = int(TOTAL_TIMESTEPS / HORIZON) # 100000 / 2048 = 244
+NUM_EPOCHS = 10
+NUM_MINIBATCHES = 32 
+BATCH_SIZE = HORIZON // NUM_MINIBATCHES # 2048 // 32 = 64
 
-def train():
+LEARNING_RATE = 3e-4
+GAMMA = 0.99
+GAE_LAMBDA = 0.95
+EPSILONS = 0.2
+VALUE_COEFF = 0.5
+ENTROPY_COEFF = 0.01
+DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+def train(env_name='Pendulum-v1'):
+
+    """ Hyperparameters """
+
+    # Initialize WandB if available
+    if WANDB_AVAILABLE:
+        wandb.init(
+            project="rl-training",
+            name=f"ppo_{env_name}",
+            config={
+                "algorithm": "ppo",
+                "environment": env_name,
+                "max_timesteps": TOTAL_TIMESTEPS,
+                "buffer_size": HORIZON,
+                "mini_batch_size": BATCH_SIZE,
+                "learning_rate": LEARNING_RATE,
+                "epochs": NUM_EPOCHS,
+            }
+        )
+    
     env = gym.make('Pendulum-v1')
     env = gym.wrappers.RecordEpisodeStatistics(env)
     agent = PPOAgent(env)
@@ -174,7 +201,7 @@ def train():
     terminated = 0
     total_steps = 0
     update_count = 0
-    episode_rewards = []
+    # episode_rewards = []
     
     while total_steps < TOTAL_TIMESTEPS:
         states = torch.zeros((HORIZON, env.observation_space.shape[0])).to(DEVICE)
@@ -183,6 +210,8 @@ def train():
         terminateds = torch.zeros((HORIZON)).to(DEVICE)
         values = torch.zeros((HORIZON)).to(DEVICE)
         log_probs = torch.zeros((HORIZON)).to(DEVICE)
+
+        rollout_rewards = []
 
         # Rollout
         for step in range(HORIZON):
@@ -197,14 +226,15 @@ def train():
             clipped_action = np.clip(raw_action, -2.0, 2.0)
 
             next_state, reward, terminated, truncated, info = env.step(clipped_action)
-            if "episode" in info:
-                print(f"Global Step: {total_steps}, Episode Return: {info['episode']['r']}, Length: {info['episode']['l']}")
-                episode_rewards.append(info['episode']['r'])
+            # if "episode" in info:
+            #     print(f"Global Step: {total_steps}, Episode Return: {info['episode']['r']}, Length: {info['episode']['l']}")
+            #     episode_rewards.append(info['episode']['r'])
+            rollout_rewards.append(reward)
 
             # Crucial: Only treat as 'done' if terminated (failure), not truncated (time limit)
             rewards[step] = torch.tensor(reward).to(DEVICE)
             if terminated or truncated:
-                next_state, _ = env.reset()  
+                next_state, _ = env.reset()
             state = torch.Tensor(next_state).to(DEVICE)
             total_steps += 1
         
@@ -226,10 +256,21 @@ def train():
         update_metrics = agent.update(rollouts)
         update_count += 1
 
-        if len(episode_rewards) >= 10:
-            avg_reward = np.mean(episode_rewards[-10:])
-            print(f'Update {update_count}: {avg_reward}')
+        # if len(episode_rewards) >= 10:
+        #     avg_reward = np.mean(episode_rewards[-10:])
+        #     print(f'Update {update_count}: {avg_reward}')
+        avg_reward = np.mean(rollout_rewards)
 
+        log_dict = {
+            "policy_loss": update_metrics['policy_loss'],
+            "value_function_loss": update_metrics['value_loss'],
+            "total_loss": update_metrics['total_loss'],
+            "average_episode_reward": avg_reward,
+        }
+
+        if WANDB_AVAILABLE:
+            wandb.log(log_dict)
 
 if __name__ == '__main__':
-    train()
+    env_name = 'Pendulum-v1'
+    train(env_name=env_name)
