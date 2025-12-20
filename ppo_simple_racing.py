@@ -103,13 +103,21 @@ class ActorCritic(nn.Module):
         # takes in batch of states and actions -> doesn't sample evaluates the log prob of specific action under the current policy
         # also returns entropy regularization term
         conv_features = self.get_obs_features(states)
-        mean = self.actor(conv_features)
-        action_logstd = self.actor_logstd.expand_as(mean)
-        std = torch.exp(action_logstd)
-        dist = torch.distributions.Normal(mean, std)
+        steer_mean = self.actor_steer(conv_features)
+        speed_mean = self.actor_speed(conv_features)
+        steer_logstd = self.actor_logstd.expand_as(steer_mean)
+        speed_logstd = self.actor_logstd.expand_as(speed_mean)
+        steer_std = torch.exp(steer_logstd)
+        speed_std = torch.exp(speed_logstd)
+        steer_dist = torch.distributions.Normal(steer_mean, steer_std)
+        speed_dist = torch.distributions.Normal(speed_mean, speed_std)
 
-        log_prob = dist.log_prob(actions).sum(1)
-        entropy = dist.entropy().sum(1)
+        steer_actions = actions[:, 0].unsqueeze(1)
+        speed_actions = actions[:, 1].unsqueeze(1)
+        steer_log_prob = steer_dist.log_prob(steer_actions).sum(1)
+        speed_log_prob = speed_dist.log_prob(speed_actions).sum(1)
+        log_prob = steer_log_prob + speed_log_prob
+        entropy = steer_dist.entropy().sum(1) + speed_dist.entropy().sum(1)
         value = self.critic(conv_features)
         return log_prob, value, entropy
 
