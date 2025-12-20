@@ -200,7 +200,7 @@ class PPOAgent:
         """
         Loads the model from a file
         """
-        checkpoint = torch.load(filepath)
+        checkpoint = torch.load(filepath, map_location=DEVICE)
         if hasattr(self, 'policy') and 'policy' in checkpoint:
             self.policy.load_state_dict(checkpoint['policy'])
 
@@ -241,6 +241,9 @@ def process_action(raw_action):
     return np.array([steer, gas, brake])
 
 """ Hyperparameters """
+TEST_MODE = False
+MODEL_FILE = "ppo_1_final.pth"  # Replace with your model file for testing
+RENDER_ENV = False
 LOG_WANDB = True
 SAVE_CHECKPOINTS = False
 TOTAL_TIMESTEPS = 100000
@@ -264,7 +267,7 @@ ENTROPY_COEFF = 0.01
 ENTROPY_DECAY = 0.9999
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-def train(env_name='CarRacing-v3', log_wandb=False):
+def train(env_name='CarRacing-v3', render_env=False, log_wandb=False):
 
     # Initialize WandB if available
     if WANDB_AVAILABLE and log_wandb:
@@ -282,7 +285,7 @@ def train(env_name='CarRacing-v3', log_wandb=False):
             }
         )
     
-    env = gym.make(f'{env_name}')
+    env = gym.make(f'{env_name}', render_mode='human' if render_env else None)
     env = ProcessedFrame(env)
     env = FrameStack(env, num_frames=NUM_FRAMES, skip_frames=SKIP_FRAMES)
     env = ActionRemapWrapper(env)
@@ -395,10 +398,36 @@ def train(env_name='CarRacing-v3', log_wandb=False):
     
     env.close()
 
+def test(model_path="./models/ppo_final.pth"):
+    env = gym.make(f'{env_name}', render_mode='human' if render_env else None)
+    env = ProcessedFrame(env)
+    env = FrameStack(env, num_frames=NUM_FRAMES, skip_frames=SKIP_FRAMES)
+    env = ActionRemapWrapper(env)
+    env = gym.wrappers.RecordEpisodeStatistics(env)
+    agent = PPOAgent(env)
+    agent.load_model(model_path)
+
+    state, _ = env.reset()
+    state = torch.Tensor(state).to(DEVICE)
+    steps = 0
+
+    while steps < TOTAL_TIMESTEPS:
+        with torch.no_grad():
+            action, _, _ = agent.policy.get_action(state)
+        processed_action = process_action(action)
+        next_state, reward, terminated, truncated, info = env.step(processed_action)
+        if terminated or truncated:
+            next_state, _ = env.reset()
+        state = torch.Tensor(next_state).to(DEVICE)
+
 if __name__ == '__main__':
     # Ensure models directory exists
     os.makedirs("./models", exist_ok=True)
 
     env_name = 'CarRacing-v3'
     log_wandb = LOG_WANDB
-    train(env_name=env_name, log_wandb=log_wandb)
+    render_env = RENDER_ENV
+    if TEST_MODE:
+        test(f"./models/{MODEL_FILE}")
+    else:
+        train(env_name=env_name, render_env=render_env, log_wandb=log_wandb)
