@@ -80,65 +80,59 @@ class ActorCritic(nn.Module):
     def get_action(self, state):
         # Takes a single state -> samples a new action from policy dist
         conv_features = self.get_obs_features(state)
-        # steer_mean = self.actor_steer(conv_features)
-        # speed_mean = self.actor_speed(conv_features)
-        mean = self.actor_mean(conv_features)
-        # steer_logstd = self.actor_logstd.expand_as(steer_mean)
-        # speed_logstd = self.actor_logstd.expand_as(speed_mean)
-        # steer_std = torch.exp(steer_logstd)
-        # speed_std = torch.exp(speed_logstd)
-        # steer_dist = torch.distributions.Normal(steer_mean, steer_std)
-        # speed_dist = torch.distributions.Normal(speed_mean, speed_std)
-        logstd = self.actor_logstd.expand_as(mean)
-        std = torch.exp(logstd)
-        dist = torch.distributions.Normal(mean, std)
-        
-        # steer_action = steer_dist.sample()
-        # speed_action = speed_dist.sample()
-        action = dist.sample()
-        
-        # steer = steer_action.cpu().numpy().flatten()
-        # speed = speed_action.cpu().numpy().flatten()
+        steer_mean = self.actor_steer(conv_features)
+        speed_mean = self.actor_speed(conv_features)
+        steer_logstd = self.actor_logstd.expand_as(steer_mean)
+        speed_logstd = self.actor_logstd.expand_as(speed_mean)
+        steer_std = torch.exp(steer_logstd)
+        speed_std = torch.exp(speed_logstd)
+        steer_dist = torch.distributions.Normal(steer_mean, steer_std)
+        speed_dist = torch.distributions.Normal(speed_mean, speed_std)
+        steer_action = steer_dist.sample()
+        speed_action = speed_dist.sample()
+        steer = steer_action.cpu().numpy().flatten()
+        speed = speed_action.cpu().numpy().flatten()
+        action = np.array([steer[0], speed[0]])
+        steer_log_prob = steer_dist.log_prob(steer_action).sum(1).cpu().numpy().flatten()
+        speed_log_prob = speed_dist.log_prob(speed_action).sum(1).cpu().numpy().flatten()
+        log_prob = steer_log_prob + speed_log_prob
 
-        # action = np.array([steer[0], gas[0], brake[0]])
-        # action = np.array([steer[0], speed[0]])
-
-        # steer_log_prob = steer_dist.log_prob(steer_action).sum(1).cpu().numpy().flatten()
-        # speed_log_prob = speed_dist.log_prob(speed_action).sum(1).cpu().numpy().flatten()
-        # log_prob = steer_log_prob + speed_log_prob
-        log_prob = dist.log_prob(action).sum(1).cpu().numpy().flatten()
+        # mean = self.actor_mean(conv_features)
+        # logstd = self.actor_logstd.expand_as(mean)
+        # std = torch.exp(logstd)
+        # dist = torch.distributions.Normal(mean, std)
+        # action = dist.sample()
+        # log_prob = dist.log_prob(action).sum(1).cpu().numpy().flatten()
+        # action = action.cpu().numpy().flatten()
 
         value = self.critic(conv_features).cpu().numpy().flatten()
-
-        action = action.cpu().numpy().flatten()
-
         return action, log_prob, value
     
     def evaluate(self, states, actions):
         # takes in batch of states and actions -> doesn't sample evaluates the log prob of specific action under the current policy
         # also returns entropy regularization term
         conv_features = self.get_obs_features(states)
-        # steer_mean = self.actor_steer(conv_features)
-        # speed_mean = self.actor_speed(conv_features)
-        mean = self.actor_mean(conv_features)
-        # steer_logstd = self.actor_logstd.expand_as(steer_mean)
-        # speed_logstd = self.actor_logstd.expand_as(speed_mean)
-        logstd = self.actor_logstd.expand_as(mean)
-        # steer_std = torch.exp(steer_logstd)
-        # speed_std = torch.exp(speed_logstd)
-        std = torch.exp(logstd)
-        # steer_dist = torch.distributions.Normal(steer_mean, steer_std)
-        # speed_dist = torch.distributions.Normal(speed_mean, speed_std)
-        dist = torch.distributions.Normal(mean, std)
-
-        # steer_actions = actions[:, 0].unsqueeze(1)
-        # speed_actions = actions[:, 1].unsqueeze(1)
-        # steer_log_prob = steer_dist.log_prob(steer_actions).sum(1)
-        # speed_log_prob = speed_dist.log_prob(speed_actions).sum(1)
-        # log_prob = steer_log_prob + speed_log_prob
-        log_prob = dist.log_prob(actions).sum(1)
-        # entropy = steer_dist.entropy().sum(1) + speed_dist.entropy().sum(1)
-        entropy = dist.entropy().sum(1)
+        steer_mean = self.actor_steer(conv_features)
+        speed_mean = self.actor_speed(conv_features)
+        steer_logstd = self.actor_logstd.expand_as(steer_mean)
+        speed_logstd = self.actor_logstd.expand_as(speed_mean)
+        steer_std = torch.exp(steer_logstd)
+        speed_std = torch.exp(speed_logstd)
+        steer_dist = torch.distributions.Normal(steer_mean, steer_std)
+        speed_dist = torch.distributions.Normal(speed_mean, speed_std)
+        steer_actions = actions[:, 0].unsqueeze(1)
+        speed_actions = actions[:, 1].unsqueeze(1)
+        steer_log_prob = steer_dist.log_prob(steer_actions).sum(1)
+        speed_log_prob = speed_dist.log_prob(speed_actions).sum(1)
+        log_prob = steer_log_prob + speed_log_prob
+        entropy = steer_dist.entropy().sum(1) + speed_dist.entropy().sum(1)
+        
+        # mean = self.actor_mean(conv_features)
+        # logstd = self.actor_logstd.expand_as(mean)
+        # std = torch.exp(logstd)
+        # dist = torch.distributions.Normal(mean, std)
+        # log_prob = dist.log_prob(actions).sum(1)
+        # entropy = dist.entropy().sum(1)
 
         value = self.critic(conv_features)
         return log_prob, value, entropy
@@ -147,7 +141,8 @@ class PPOAgent:
     def __init__(self, env):
         self.observation_size = env.observation_space.shape[0]
         self.action_size = env.action_space.shape[0]
-        self.policy = ActorCritic(num_frames=NUM_FRAMES, output_shape=self.action_size).to(DEVICE)
+        # self.policy = ActorCritic(num_frames=NUM_FRAMES, output_shape=self.action_size).to(DEVICE)
+        self.policy = ActorCritic(num_frames=NUM_FRAMES, output_shape=2).to(DEVICE) # Only steer and speed
         self.optimizer = Adam(self.policy.parameters(), lr=LEARNING_RATE)
         self.lr_scheduler = LinearLR(self.optimizer, start_factor=1.0, end_factor=0.1, total_iters=NUM_UPDATES)
         self.entropy_coef = ENTROPY_COEFF
@@ -253,43 +248,45 @@ def compute_gae(rewards, values, terminated, terminateds, next_value):
 def process_action(raw_action):
     # print(f"Raw action from policy: {raw_action}")
 
-    # Clip actions to be within action space bounds
-    # speed = raw_action[1]
-    # if speed > 0:
-    #     gas = np.clip(speed, 0.0, 1.0)
-    #     brake = 0.0
-    # else:
-    #     gas = 0.0
-    #     brake = np.clip(-speed, 0.0, 1.0)
-    
     # Scale from Tanh output to [-1, 1] and [0, 1]
     # keep relative probabilities
-    
-    # steer = np.clip(raw_action[0], -1.0, 1.0)
-    # gas = np.clip(gas, 0.0, 1.0)
-    # brake = np.clip(brake, 0.0, 1.0)
-
-    # scale tanh to [-1,1]
     steer = raw_action[0]
     if steer < -0.66:
         steer = max((steer + 0.66) / 2.0 - 0.66, -1.0)
     elif steer > 0.66:
         steer = min((steer - 0.66) / 2.0 + 0.66, 1.0)
 
-    gas = raw_action[1]
-    if gas < -0.66:
-        gas = max((gas + 0.66) / 2.0 - 0.66, -1.0)
-    elif gas > 0.66:
-        gas = min((gas - 0.66) / 2.0 + 0.66, 1.0)
-    gas = (gas + 1) / 2  # Scale to [0, 1]
+    speed = raw_action[1]
+    if speed < -0.66:
+        speed = max((speed + 0.66) / 2.0 - 0.66, -1.0)
+    elif speed > 0.66:
+        speed = min((speed - 0.66) / 2.0 + 0.66, 1.0)
+    # Allow only one input and scale to [0, 1]
+    if speed > 0:
+        gas = speed
+        brake = 0.0
+    else:
+        gas = 0.0
+        brake = -speed
 
-    brake = raw_action[2]
-    if brake < -0.66:
-        brake = max((brake + 0.66) / 2.0 - 0.66, -1.0)
-    elif brake > 0.66:
-        brake = min((brake - 0.66) / 2.0 + 0.66, 1.0)
-    brake = (brake + 1) / 2  # Scale to [0, 1]
+    # gas = raw_action[1]
+    # if gas < -0.66:
+    #     gas = max((gas + 0.66) / 2.0 - 0.66, -1.0)
+    # elif gas > 0.66:
+    #     gas = min((gas - 0.66) / 2.0 + 0.66, 1.0)
+    # gas = (gas + 1) / 2  # Scale to [0, 1]
 
+    # brake = raw_action[2]
+    # if brake < -0.66:
+    #     brake = max((brake + 0.66) / 2.0 - 0.66, -1.0)
+    # elif brake > 0.66:
+    #     brake = min((brake - 0.66) / 2.0 + 0.66, 1.0)
+    # brake = (brake + 1) / 2  # Scale to [0, 1]
+
+    # Clip actions to be within action space bounds
+    steer = np.clip(steer, -1.0, 1.0)
+    gas = np.clip(gas, 0.0, 1.0)
+    brake = np.clip(brake, 0.0, 1.0)
     # print(f"Processed action - Steer: {steer}, Gas: {gas}, Brake: {brake}")
 
     return np.array([steer, gas, brake])
@@ -369,8 +366,8 @@ def train(env_name='CarRacing-v3', render_env=False, log_wandb=False):
     
     while total_steps < TOTAL_TIMESTEPS:
         states = torch.zeros((HORIZON, *env.observation_space.shape)).to(DEVICE)
-        actions = torch.zeros((HORIZON, env.action_space.shape[0])).to(DEVICE)
-        # actions = torch.zeros((HORIZON, 2)).to(DEVICE)  # Only steer and speed
+        # actions = torch.zeros((HORIZON, env.action_space.shape[0])).to(DEVICE)
+        actions = torch.zeros((HORIZON, 2)).to(DEVICE)  # Only steer and speed
         rewards = torch.zeros((HORIZON)).to(DEVICE)
         terminateds = torch.zeros((HORIZON)).to(DEVICE)
         values = torch.zeros((HORIZON)).to(DEVICE)
