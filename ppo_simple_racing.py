@@ -246,7 +246,7 @@ def compute_gae(rewards, values, terminated, terminateds, next_value):
     returns = [adv + val for adv, val in zip(advantages, values)]
     return torch.tensor(returns).to(DEVICE), torch.tensor(advantages).to(DEVICE)
 
-def process_action(raw_action):
+def process_action(raw_action, rolling_speed=None):
     # print(f"Raw action from policy: {raw_action}")
 
     # Scale from Tanh output to [-1, 1] and [0, 1]
@@ -289,61 +289,14 @@ def process_action(raw_action):
     gas = np.clip(gas, 0.0, 1.0)
     brake = np.clip(brake, 0.0, 1.0)
 
+    # Limit braking based on current speed to encourage forward movement
+    if rolling_speed < 3.0:
+        brake = 0.0
+    elif rolling_speed < 6.0:
+        brake = min(brake, 0.2)
     # print(f"Processed action - Steer: {steer}, Gas: {gas}, Brake: {brake}")
 
     return np.array([steer, gas, brake])
-
-# def process_action(raw_action, rolling_speed):
-#     # print(f"Raw action from policy: {raw_action}")
-
-#     # Scale from Tanh output to [-1, 1] and [0, 1]
-#     # keep relative probabilities
-#     steer = raw_action[0]
-#     if steer < -0.66:
-#         steer = max((steer + 0.66) / 2.0 - 0.66, -1.0)
-#     elif steer > 0.66:
-#         steer = min((steer - 0.66) / 2.0 + 0.66, 1.0)
-
-#     speed = raw_action[1]
-#     if speed < -0.66:
-#         speed = max((speed + 0.66) / 2.0 - 0.66, -1.0)
-#     elif speed > 0.66:
-#         speed = min((speed - 0.66) / 2.0 + 0.66, 1.0)
-#     # Allow only one input and scale to [0, 1]
-#     if speed > 0:
-#         gas = speed
-#         brake = 0.0
-#     else:
-#         gas = 0.0
-#         brake = -speed
-
-#     # gas = raw_action[1]
-#     # if gas < -0.66:
-#     #     gas = max((gas + 0.66) / 2.0 - 0.66, -1.0)
-#     # elif gas > 0.66:
-#     #     gas = min((gas - 0.66) / 2.0 + 0.66, 1.0)
-#     # gas = (gas + 1) / 2  # Scale to [0, 1]
-
-#     # brake = raw_action[2]
-#     # if brake < -0.66:
-#     #     brake = max((brake + 0.66) / 2.0 - 0.66, -1.0)
-#     # elif brake > 0.66:
-#     #     brake = min((brake - 0.66) / 2.0 + 0.66, 1.0)
-#     # brake = (brake + 1) / 2  # Scale to [0, 1]
-
-#     # Clip actions to be within action space bounds
-#     steer = np.clip(steer, -1.0, 1.0)
-#     gas = np.clip(gas, 0.0, 1.0)
-#     brake = np.clip(brake, 0.0, 1.0)
-
-#     # Limit braking based on current speed to encourage forward movement
-#     if rolling_speed < 0.2:
-#         brake = 0.0
-#     elif rolling_speed < 0.4:
-#         brake = min(brake, 0.2)
-#     # print(f"Processed action - Steer: {steer}, Gas: {gas}, Brake: {brake}")
-
-#     return np.array([steer, gas, brake])
 
 """ Hyperparameters """
 TEST_MODE = False
@@ -416,6 +369,8 @@ def train(env_name='CarRacing-v3', render_env=False, log_wandb=False):
     
     # Register signal handler for graceful shutdown
     signal.signal(signal.SIGINT, save_on_interrupt)
+
+    rolling_speed = 0.0
     
     while total_steps < TOTAL_TIMESTEPS:
         states = torch.zeros((HORIZON, *env.observation_space.shape)).to(DEVICE)
@@ -437,7 +392,8 @@ def train(env_name='CarRacing-v3', render_env=False, log_wandb=False):
                 values[step] = torch.tensor(value).to(DEVICE)       
             actions[step] = torch.tensor(raw_action).to(DEVICE)
             log_probs[step] = torch.tensor(log_prob).to(DEVICE)
-            processed_action = process_action(raw_action)
+            processed_action = process_action(raw_action, rolling_speed)
+            rolling_speed = 0.9999*rolling_speed + processed_action[1]*0.1 - processed_action[2]
 
             next_state, reward, terminated, truncated, info = env.step(processed_action)
 
@@ -451,6 +407,7 @@ def train(env_name='CarRacing-v3', render_env=False, log_wandb=False):
             if terminated or truncated:
                 next_state, _ = env.reset()
                 episode += 1
+                rolling_speed = 0.0
             state = torch.Tensor(next_state).to(DEVICE)
             total_steps += 1
         
