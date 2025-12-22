@@ -299,6 +299,7 @@ def process_action(raw_action, rolling_speed=None, steering_buffer=None):
     if steering_buffer is not None:
         avg_steer = np.mean(steering_buffer) if len(steering_buffer) > 0 else 0.0
         steer = 0.7 * steer + 0.3 * avg_steer
+    steer = np.clip(steer, -0.7, 0.7)
 
     # print(f"Processed action - Steer: {steer}, Gas: {gas}, Brake: {brake}")
 
