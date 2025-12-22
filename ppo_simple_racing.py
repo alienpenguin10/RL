@@ -246,7 +246,7 @@ def compute_gae(rewards, values, terminated, terminateds, next_value):
     returns = [adv + val for adv, val in zip(advantages, values)]
     return torch.tensor(returns).to(DEVICE), torch.tensor(advantages).to(DEVICE)
 
-def process_action(raw_action, rolling_speed=None):
+def process_action(raw_action, rolling_speed=None, steering_buffer=None):
     # print(f"Raw action from policy: {raw_action}")
 
     # Scale from Tanh output to [-1, 1] and [0, 1]
@@ -294,6 +294,12 @@ def process_action(raw_action, rolling_speed=None):
         brake = 0.0
     elif rolling_speed < 6.0:
         brake = min(brake, 0.2)
+
+    # Limit steering input
+    if steering_buffer is not None:
+        avg_steer = np.mean(steering_buffer) if len(steering_buffer) > 0 else 0.0
+        steer = 0.7 * steer + 0.3 * avg_steer
+
     # print(f"Processed action - Steer: {steer}, Gas: {gas}, Brake: {brake}")
 
     return np.array([steer, gas, brake])
@@ -371,6 +377,7 @@ def train(env_name='CarRacing-v3', render_env=False, log_wandb=False):
     signal.signal(signal.SIGINT, save_on_interrupt)
 
     rolling_speed = 0.0
+    steering_buffer = deque([], maxlen=5)
     
     while total_steps < TOTAL_TIMESTEPS:
         states = torch.zeros((HORIZON, *env.observation_space.shape)).to(DEVICE)
@@ -392,8 +399,9 @@ def train(env_name='CarRacing-v3', render_env=False, log_wandb=False):
                 values[step] = torch.tensor(value).to(DEVICE)       
             actions[step] = torch.tensor(raw_action).to(DEVICE)
             log_probs[step] = torch.tensor(log_prob).to(DEVICE)
-            processed_action = process_action(raw_action, rolling_speed)
+            processed_action = process_action(raw_action, rolling_speed, steering_buffer)
             rolling_speed = 0.9999*rolling_speed + processed_action[1]*0.1 - processed_action[2]
+            steering_buffer.append(processed_action[0])
 
             next_state, reward, terminated, truncated, info = env.step(processed_action)
 
@@ -408,6 +416,7 @@ def train(env_name='CarRacing-v3', render_env=False, log_wandb=False):
                 next_state, _ = env.reset()
                 episode += 1
                 rolling_speed = 0.0
+                steering_buffer.clear()
             state = torch.Tensor(next_state).to(DEVICE)
             total_steps += 1
         
