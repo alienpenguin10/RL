@@ -289,17 +289,18 @@ def process_action(raw_action, rolling_speed=None, steering_buffer=None):
     gas = np.clip(gas, 0.0, 1.0)
     brake = np.clip(brake, 0.0, 1.0)
 
-    # Limit braking based on current speed to encourage forward movement
-    if rolling_speed < 3.0:
-        brake = 0.0
-    elif rolling_speed < 6.0:
-        brake = min(brake, 0.2)
+    if rolling_speed is not None:
+        # Limit braking based on current speed to encourage forward movement
+        if rolling_speed < 3.0:
+            brake = 0.0
+        elif rolling_speed < 6.0:
+            brake = min(brake, 0.2)
 
-    # Limit steering input
     if steering_buffer is not None:
+        # Limit steering input
         avg_steer = np.mean(steering_buffer) if len(steering_buffer) > 0 else 0.0
         steer = 0.7 * steer + 0.3 * avg_steer
-    steer = np.clip(steer, -0.7, 0.7)
+        steer = np.clip(steer, -0.7, 0.7)
 
     # print(f"Processed action - Steer: {steer}, Gas: {gas}, Brake: {brake}")
 
@@ -311,7 +312,7 @@ MODEL_FILE = "ppo_1_final.pth"  # Replace with your model file for testing
 RENDER_ENV = False
 LOG_WANDB = True
 SAVE_CHECKPOINTS = True
-TOTAL_TIMESTEPS = 500000
+TOTAL_TIMESTEPS = 1000000
 
 HORIZON = 2048 # One episode is 200 steps for pendulum
 NUM_UPDATES = int(TOTAL_TIMESTEPS / HORIZON) # 100000 / 2048 = 244
@@ -321,7 +322,7 @@ BATCH_SIZE = HORIZON // NUM_MINIBATCHES # 2048 // 32 = 64
 FRAME_STACKING = True
 NUM_FRAMES = 5
 SKIP_FRAMES = 0
-CHECKPOINT_INTERVAL = TOTAL_TIMESTEPS // 5
+CHECKPOINT_INTERVAL = TOTAL_TIMESTEPS // 20
 
 LEARNING_RATE = 3e-4
 GAMMA = 0.99
@@ -377,8 +378,8 @@ def train(env_name='CarRacing-v3', render_env=False, log_wandb=False):
     # Register signal handler for graceful shutdown
     signal.signal(signal.SIGINT, save_on_interrupt)
 
-    rolling_speed = 0.0
-    steering_buffer = deque([], maxlen=5)
+    # rolling_speed = 0.0
+    # steering_buffer = deque([], maxlen=5)
     
     while total_steps < TOTAL_TIMESTEPS:
         states = torch.zeros((HORIZON, *env.observation_space.shape)).to(DEVICE)
@@ -400,9 +401,9 @@ def train(env_name='CarRacing-v3', render_env=False, log_wandb=False):
                 values[step] = torch.tensor(value).to(DEVICE)       
             actions[step] = torch.tensor(raw_action).to(DEVICE)
             log_probs[step] = torch.tensor(log_prob).to(DEVICE)
-            processed_action = process_action(raw_action, rolling_speed, steering_buffer)
-            rolling_speed = 0.9999*rolling_speed + processed_action[1]*0.1 - processed_action[2]
-            steering_buffer.append(processed_action[0])
+            processed_action = process_action(raw_action)
+            # rolling_speed = 0.9999*rolling_speed + processed_action[1]*0.1 - processed_action[2]
+            # steering_buffer.append(processed_action[0])
 
             next_state, reward, terminated, truncated, info = env.step(processed_action)
 
@@ -416,8 +417,8 @@ def train(env_name='CarRacing-v3', render_env=False, log_wandb=False):
             if terminated or truncated:
                 next_state, _ = env.reset()
                 episode += 1
-                rolling_speed = 0.0
-                steering_buffer.clear()
+                # rolling_speed = 0.0
+                # steering_buffer.clear()
             state = torch.Tensor(next_state).to(DEVICE)
             total_steps += 1
         
