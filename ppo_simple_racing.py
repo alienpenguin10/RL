@@ -393,7 +393,6 @@ def train(env_name='CarRacing-v3', render_env=False, log_wandb=False):
     env = gym.make(f'{env_name}', render_mode='human' if render_env else None)
     env = ProcessedFrame(env)
     env = FrameStack(env, num_frames=NUM_FRAMES, skip_frames=SKIP_FRAMES)
-    env = ActionRemapWrapper(env)
     env = gym.wrappers.RecordEpisodeStatistics(env)
     agent = PPOAgent(env)
 
