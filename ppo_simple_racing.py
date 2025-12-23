@@ -311,18 +311,18 @@ TEST_MODE = False
 MODEL_FILE = "ppo_1_final.pth"  # Replace with your model file for testing
 RENDER_ENV = False
 LOG_WANDB = True
-SAVE_CHECKPOINTS = True
-TOTAL_TIMESTEPS = 1000000
+SAVE_CHECKPOINTS = False
+TOTAL_TIMESTEPS = 100000
 
 HORIZON = 2048 # One episode is 200 steps for pendulum
 NUM_UPDATES = int(TOTAL_TIMESTEPS / HORIZON) # 100000 / 2048 = 244
-NUM_EPOCHS = 5
+NUM_EPOCHS = 4
 NUM_MINIBATCHES = 32
 BATCH_SIZE = HORIZON // NUM_MINIBATCHES # 2048 // 32 = 64
 FRAME_STACKING = True
-NUM_FRAMES = 5
-SKIP_FRAMES = 0
-CHECKPOINT_INTERVAL = TOTAL_TIMESTEPS // 20
+NUM_FRAMES = 8
+SKIP_FRAMES = 5
+CHECKPOINT_INTERVAL = 1000*4 # Save every 4 episodes (1000 step episodes)
 
 LEARNING_RATE = 3e-4
 GAMMA = 0.99
@@ -364,6 +364,9 @@ def train(env_name='CarRacing-v3', render_env=False, log_wandb=False):
     update_count = 0
     episode = 0 # Track current episode for saving on interrupt
     checkpoint = 0
+    episode_steps = 0
+    episode_reward = 0
+    episode_rewards = []
 
     def save_on_interrupt(signum, frame):
         """Save model when interrupted (Ctrl+C)"""
@@ -378,7 +381,7 @@ def train(env_name='CarRacing-v3', render_env=False, log_wandb=False):
     # Register signal handler for graceful shutdown
     signal.signal(signal.SIGINT, save_on_interrupt)
 
-    # rolling_speed = 0.0
+    rolling_speed = 0.0
     # steering_buffer = deque([], maxlen=5)
     
     while total_steps < TOTAL_TIMESTEPS:
@@ -390,8 +393,6 @@ def train(env_name='CarRacing-v3', render_env=False, log_wandb=False):
         values = torch.zeros((HORIZON)).to(DEVICE)
         log_probs = torch.zeros((HORIZON)).to(DEVICE)
 
-        rollout_rewards = []
-
         # Rollout
         for step in range(HORIZON):
             states[step] = state
@@ -402,22 +403,29 @@ def train(env_name='CarRacing-v3', render_env=False, log_wandb=False):
             actions[step] = torch.tensor(raw_action).to(DEVICE)
             log_probs[step] = torch.tensor(log_prob).to(DEVICE)
             processed_action = process_action(raw_action)
-            # rolling_speed = 0.9999*rolling_speed + processed_action[1]*0.1 - processed_action[2]
+            rolling_speed = 0.9999*rolling_speed + processed_action[1]*0.1 - processed_action[2]
             # steering_buffer.append(processed_action[0])
 
             next_state, reward, terminated, truncated, info = env.step(processed_action)
+            episode_steps += 1
 
             # if "episode" in info:
             #     print(f"Global Step: {total_steps}, Episode Return: {info['episode']['r']}, Length: {info['episode']['l']}")
             #     episode_rewards.append(info['episode']['r'])
-            rollout_rewards.append(reward)
+            episode_reward += reward
 
             # Crucial: Only treat as 'done' if terminated (failure), not truncated (time limit)
             rewards[step] = torch.tensor(reward).to(DEVICE)
+            if (episode_steps > 100 and rewards[step-100:step].sum() < -10.0):
+                # Early termination if no progress for 100 steps
+                truncated = True
             if terminated or truncated:
                 next_state, _ = env.reset()
                 episode += 1
-                # rolling_speed = 0.0
+                episode_steps = 0
+                episode_rewards.append(episode_reward)
+                episode_reward = 0
+                rolling_speed = 0.0
                 # steering_buffer.clear()
             state = torch.Tensor(next_state).to(DEVICE)
             total_steps += 1
@@ -443,7 +451,8 @@ def train(env_name='CarRacing-v3', render_env=False, log_wandb=False):
         # if len(episode_rewards) >= 10:
         #     avg_reward = np.mean(episode_rewards[-10:])
         #     print(f'Update {update_count}: {avg_reward}')
-        avg_reward = np.mean(rollout_rewards)
+        avg_reward = np.mean(episode_rewards)
+        episode_rewards = []  # Clear after logging
 
         log_dict = {
             "policy_loss": update_metrics['policy_loss'],
