@@ -6,7 +6,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-class MLP(nn.Module):
+class MultiLayerPerceptron(nn.Module):
     def __init__(self, input_dim, hidden_dims, output_dim, activation=nn.ReLU, output_activation=None):
         super().__init__()
         layers = []
@@ -24,15 +24,7 @@ class MLP(nn.Module):
 class ConvNet(nn.Module):
     def __init__(self, obs_shape, feature_dim=512):
         super().__init__()
-        # obs_shape from gym: (H, W, C) -> convert to (C, H, W) for PyTorch conv
-        if len(obs_shape) == 3:
-            # Assume gym format (H, W, C) if last dim is small (channels)
-            if obs_shape[2] <= 4:
-                self.input_shape = (obs_shape[2], obs_shape[0], obs_shape[1])  # (C, H, W)
-            else:
-                self.input_shape = obs_shape  # Already (C, H, W)
-        else:
-            self.input_shape = obs_shape
+        self.input_shape = obs_shape
             
         self.conv1 = nn.Conv2d(self.input_shape[0], 32, 8, stride=4)
         self.conv2 = nn.Conv2d(32, 64, 4, stride=2)
@@ -47,12 +39,6 @@ class ConvNet(nn.Module):
         self.feature_dim = feature_dim
 
     def forward(self, x):
-        # Check if input is (B, H, W, C) and needs permutation to (B, C, H, W)
-        # We use self.input_shape[0] which stores the expected channel count
-        if len(x.shape) == 4:
-            if x.shape[1] != self.input_shape[0] and x.shape[-1] == self.input_shape[0]:
-                x = x.permute(0, 3, 1, 2).contiguous()
-        
         x = F.relu(self.conv1(x))
         x = F.relu(self.conv2(x))
         x = F.relu(self.conv3(x))
@@ -60,13 +46,17 @@ class ConvNet(nn.Module):
         return F.relu(self.fc(x))
     
 class PolicyNetwork(nn.Module):
+
     def __init__(self, obs_shape, action_dim, feature_dim=512, hidden_dims=[256, 256], log_std_min=-20, log_std_max=2):
         super().__init__()
+        
+        # Constants for log_std clamping
+        # This is used to prevent the log_std from becoming too large or too small
         self.log_std_min = log_std_min
         self.log_std_max = log_std_max
         self.cnn = ConvNet(obs_shape, feature_dim)
-        self.mean_net = MLP(feature_dim, hidden_dims, action_dim)
-        self.log_std_net = MLP(feature_dim, hidden_dims, action_dim)
+        self.mean_net = MultiLayerPerceptron(feature_dim, hidden_dims, action_dim)
+        self.log_std_net = MultiLayerPerceptron(feature_dim, hidden_dims, action_dim)
         self.action_dim = action_dim
 
     def forward(self, x):
@@ -148,9 +138,8 @@ class QNetwork(nn.Module):
     def __init__(self, obs_shape, action_dim, feature_dim=512, hidden_dims=[256, 256]):
         super().__init__()
         self.cnn = ConvNet(obs_shape, feature_dim)
-        self.net = MLP(feature_dim + action_dim, hidden_dims, 1)
+        self.net = MultiLayerPerceptron(feature_dim + action_dim, hidden_dims, 1)
     
     def forward(self, state, action):
-        """Takes both state and action"""
         features = self.cnn(state)
         return self.net(torch.cat([features, action], dim=-1))

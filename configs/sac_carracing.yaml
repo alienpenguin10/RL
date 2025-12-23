@@ -9,7 +9,7 @@ n_stack: 4
 
 # Training settings
 max_timesteps: 500000
-start_steps: 20000 # Random warmup steps
+start_steps: 1000 # Random warmup steps
 checkpoint_interval: 25000
 log_freq: 1000
 
@@ -30,7 +30,7 @@ alpha_weight_decay: 0.0001
 hidden_dims: [256, 256]
 
 # Replay buffer
-buffer_size: 100000
+buffer_size: 1000
 
 # Training dynamics
 train_freq: 1  # Update every N steps

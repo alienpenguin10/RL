@@ -8,7 +8,7 @@ import time
 import yaml
 import argparse
 from gymnasium.wrappers import RecordVideo
-from wrappers import PreprocessCarRacing, RepeatAction, FrameStack, ThrottleActionWrapper
+from wrappers import PreprocessWrapper, FrameSkipWrapper, FrameStack, ThrottleActionWrapper
 
 
 def load_config(config_path):
@@ -50,10 +50,10 @@ def create_env(env_name, use_grayscale, use_frame_stack, use_repeat_action,
         )
 
     if use_grayscale and use_frame_stack:
-        env = PreprocessCarRacing(env, resize=(84, 84))
+        env = PreprocessWrapper(env, resize=(84, 84))
         if use_repeat_action:
-            env = RepeatAction(env, skip=n_stack)
-        env = FrameStack(env, num_stack=n_stack)
+            env = FrameSkipWrapper(env, skip=n_stack)
+        env = FrameStack(env, num_frames=n_stack)
 
     return env
 
@@ -116,7 +116,6 @@ def train_sac_stepwise(config):
     obs_dim = env.observation_space.shape
     action_dim = env.action_space.shape[0]
 
-    # Initialize agent with config parameters
     agent = SACAgent(
         obs_dim=obs_dim,
         action_dim=action_dim,
@@ -142,7 +141,6 @@ def train_sac_stepwise(config):
     print(f"Device: {agent.device}")
     print(f"Train frequency: {train_freq}, Gradient steps: {gradient_steps}")
 
-    # Track current step for graceful shutdown
     current_step = [0]
 
     def save_on_interrupt(signum, frame):
@@ -158,19 +156,17 @@ def train_sac_stepwise(config):
     # Register signal handler
     signal.signal(signal.SIGINT, save_on_interrupt)
 
-    # Initialize episode tracking
+    # Episode tracking
     obs, _ = env.reset()
     episode_reward = 0
     episode_rewards_history = []
     last_log_step = 0
     episode_steps = 0
     episode_num = 0
-    best_eval_score = -np.inf
+    cur_best_evaluation_score = -np.inf
 
     # Timing statistics
     start_time = time.time()
-    last_log_time = start_time
-    steps_since_log = 0
 
     print(f"\nStarting training for {max_timesteps:,} steps...")
     print(f"Warmup period: {start_steps:,} steps\n")
@@ -178,37 +174,37 @@ def train_sac_stepwise(config):
     # fill buffer
     if start_steps > 0:
         print(f"[BUFFER] Prefilling buffer ({start_steps} steps)...")
-        prefill_rewards = []
-        prefill_episode_reward = 0
-        prefill_episode_count = 0
-        log_interval = max(start_steps // 10, 1000)
+        buffer_rewards = []
+        buffer_ep_reward = 0
+        buffer_ep_count = 0
+        report_buffer_progress_interval = max(start_steps // 10, 1000)
 
-        for prefill_step in range(start_steps):
+        for buffer_step in range(start_steps):
             action = env.action_space.sample()
-            next_obs, reward, term, trunc, _ = env.step(action)
-            agent.replay_buffer.push(obs, action, reward, next_obs, term or trunc)
+            next_obs, reward, terminated, truncated, _ = env.step(action)
+            agent.replay_buffer.push(obs, action, reward, next_obs, terminated or truncated)
 
-            prefill_episode_reward += reward
+            buffer_ep_reward += reward
             obs = next_obs
 
-            if term or trunc:
-                prefill_rewards.append(prefill_episode_reward)
-                prefill_episode_count += 1
+            if terminated or truncated:
+                buffer_rewards.append(buffer_ep_reward)
+                buffer_ep_count += 1
                 obs, _ = env.reset()
-                prefill_episode_reward = 0
+                buffer_ep_reward = 0
 
-            if (prefill_step + 1) % log_interval == 0:
-                progress = 100 * (prefill_step + 1) / start_steps
+            if (buffer_step + 1) % report_buffer_progress_interval == 0:
+                progress = 100 * (buffer_step + 1) / start_steps
                 buffer_size = len(agent.replay_buffer)
-                avg_reward = np.mean(prefill_rewards) if prefill_rewards else 0
-                print(f"  [{progress:5.1f}%] Step {prefill_step + 1:,}/{start_steps:,} | "
-                      f"Buffer: {buffer_size:,} | Episodes: {prefill_episode_count} | "
+                avg_reward = np.mean(buffer_rewards) if buffer_rewards else 0
+                print(f"  [{progress:5.1f}%] Step {buffer_step + 1:,}/{start_steps:,} | "
+                      f"Buffer: {buffer_size:,} | Episodes: {buffer_ep_count} | "
                       f"Avg Reward: {avg_reward:.2f}")
 
         final_buffer_size = len(agent.replay_buffer)
-        final_avg = np.mean(prefill_rewards) if prefill_rewards else 0
+        final_avg = np.mean(buffer_rewards) if buffer_rewards else 0
         print(f"[OK] Buffer prefilled: {final_buffer_size:,} transitions | "
-              f"{prefill_episode_count} episodes | Avg reward: {final_avg:.2f}\n")
+              f"{buffer_ep_count} episodes | Avg reward: {final_avg:.2f}\n")
 
     for total_steps in range(1, max_timesteps + 1):
         current_step[0] = total_steps
@@ -241,9 +237,9 @@ def train_sac_stepwise(config):
         episode_steps += 1
 
         # Training update logic
-        buffer_full = len(agent.replay_buffer) >= batch_size
+        buffer_warmed_up = len(agent.replay_buffer) >= batch_size
 
-        if buffer_full and total_steps >= start_steps and total_steps % train_freq == 0:
+        if buffer_warmed_up and total_steps >= start_steps and total_steps % train_freq == 0:
             metrics = None
             for _ in range(gradient_steps):
                 metrics = agent.update()
@@ -282,43 +278,43 @@ def train_sac_stepwise(config):
             episode_reward = 0
             episode_steps = 0
 
-        # Periodic evaluation with video recording
+        # Evaluation + Video Recording
         if total_steps % checkpoint_interval == 0 and total_steps > 0:
             print(f"\n[EVAL] Evaluating at step {total_steps:,}...")
-            eval_rewards = []
+            evaluation_rewards = []
 
-            for eval_ep in range(5):
-                eval_obs, _ = eval_env.reset()
-                eval_done = False
-                eval_reward = 0
-                eval_steps = 0
+            for evaluation_episode in range(5):
+                evaluation_obs, _ = eval_env.reset()
+                evaluation_done = False
+                evaluation_reward = 0
+                evaluation_steps = 0
 
-                while not eval_done and eval_steps < max_ep_len:
-                    eval_action = agent.select_action(eval_obs, deterministic=True)
-                    eval_obs, eval_r, eval_term, eval_trunc, _ = eval_env.step(eval_action)
-                    eval_done = eval_term or eval_trunc
-                    eval_reward += eval_r
-                    eval_steps += 1
+                while not evaluation_done and evaluation_steps < max_ep_len:
+                    evaluation_action = agent.select_action(evaluation_obs, deterministic=True)
+                    evaluation_obs, evaluation_reward, evaluation_terminated, evaluation_truncated, _ = eval_env.step(evaluation_action)
+                    evaluation_done = evaluation_terminated or evaluation_truncated
+                    evaluation_reward += evaluation_reward
+                    evaluation_steps += 1
 
-                eval_rewards.append(eval_reward)
-                print(f"    Eval Episode {eval_ep + 1}: {eval_reward:.2f}")
+                evaluation_rewards.append(evaluation_reward)
+                print(f"    Eval Episode {evaluation_episode + 1}: {evaluation_reward:.2f}")
 
-            eval_mean = np.mean(eval_rewards)
-            eval_std = np.std(eval_rewards)
-            print(f"[EVAL] Mean reward: {eval_mean:.2f} ± {eval_std:.2f}")
+            evaluation_mean = np.mean(evaluation_rewards)
+            eval_std = np.std(evaluation_rewards)
+            print(f"[EVAL] Mean reward: {evaluation_mean:.2f} ± {eval_std:.2f}")
 
             if WANDB_AVAILABLE:
                 wandb.log({
-                    'eval/mean_reward': eval_mean,
+                    'eval/mean_reward': evaluation_mean,
                     'eval/std_reward': eval_std,
-                    'eval/min_reward': np.min(eval_rewards),
-                    'eval/max_reward': np.max(eval_rewards),
+                    'eval/min_reward': np.min(evaluation_rewards),
+                    'eval/max_reward': np.max(evaluation_rewards),
                 }, step=total_steps)
 
-            if eval_mean > best_eval_score:
-                best_eval_score = eval_mean
+            if evaluation_mean > cur_best_evaluation_score:
+                cur_best_evaluation_score = evaluation_mean
                 agent.save_model(f"./models/sac_best.pth")
-                print(f"[BEST] New best model saved! Score: {best_eval_score:.2f}")
+                print(f"[BEST] New best model saved! Score: {cur_best_evaluation_score:.2f}")
 
             agent.save_model(f"./models/sac_step_{total_steps}.pth")
             print(f"[CHECKPOINT] Saved checkpoint at step {total_steps:,}\n")

@@ -85,7 +85,6 @@ class SACAgent(BaseAgent):
         state_tensor = torch.as_tensor(state, dtype=torch.float32, device=self.device).unsqueeze(0)
         with torch.no_grad():
             action, _, _ = self.policy_network.step(state_tensor, deterministic)
-        # print(action.cpu().numpy()[0].astype(np.float32))
         return action.cpu().numpy()[0].astype(np.float32)
 
     def store_transition(self, state, action, reward, next_state, log_prob, done, value=None):
