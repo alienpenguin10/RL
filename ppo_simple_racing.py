@@ -324,6 +324,7 @@ NUM_FRAMES = 6
 SKIP_FRAMES = 4
 CHECKPOINT_INTERVAL = 1000*4 # Save every 4 episodes (1000 step episodes)
 
+EPISODE_CUTOFF = 300  # Early termination if no progress for n steps
 LEARNING_RATE = 3e-4
 GAMMA = 0.99
 GAE_LAMBDA = 0.95
@@ -381,7 +382,7 @@ def train(env_name='CarRacing-v3', render_env=False, log_wandb=False):
     # Register signal handler for graceful shutdown
     signal.signal(signal.SIGINT, save_on_interrupt)
 
-    rolling_speed = 0.0
+    # rolling_speed = 0.0
     # steering_buffer = deque([], maxlen=5)
     
     while total_steps < TOTAL_TIMESTEPS:
@@ -403,7 +404,7 @@ def train(env_name='CarRacing-v3', render_env=False, log_wandb=False):
             actions[step] = torch.tensor(raw_action).to(DEVICE)
             log_probs[step] = torch.tensor(log_prob).to(DEVICE)
             processed_action = process_action(raw_action)
-            rolling_speed = 0.9999*rolling_speed + processed_action[1]*0.1 - processed_action[2]
+            # rolling_speed = 0.9999*rolling_speed + processed_action[1]*0.1 - processed_action[2]
             # steering_buffer.append(processed_action[0])
 
             next_state, reward, terminated, truncated, info = env.step(processed_action)
@@ -416,8 +417,9 @@ def train(env_name='CarRacing-v3', render_env=False, log_wandb=False):
 
             # Crucial: Only treat as 'done' if terminated (failure), not truncated (time limit)
             rewards[step] = torch.tensor(reward).to(DEVICE)
-            if (episode_steps >= 200 and rewards.numel() >= 200 and rewards[step-200:step].sum() < -19.0):
+            if (episode_steps >= EPISODE_CUTOFF and rewards.numel() >= EPISODE_CUTOFF and rewards[step-EPISODE_CUTOFF:step].sum() < -EPISODE_CUTOFF*0.09):
                 # Early termination if no progress for extended period
+                rewards[step] += -80.0  # Large negative reward for stagnation
                 truncated = True
             if terminated or truncated:
                 next_state, _ = env.reset()
@@ -425,7 +427,7 @@ def train(env_name='CarRacing-v3', render_env=False, log_wandb=False):
                 episode_steps = 0
                 episode_rewards.append(episode_reward)
                 episode_reward = 0
-                rolling_speed = 0.0
+                # rolling_speed = 0.0
                 # steering_buffer.clear()
             state = torch.Tensor(next_state).to(DEVICE)
             total_steps += 1
