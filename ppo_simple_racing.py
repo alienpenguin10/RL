@@ -312,16 +312,16 @@ MODEL_FILE = "ppo_1_final.pth"  # Replace with your model file for testing
 RENDER_ENV = False
 LOG_WANDB = True
 SAVE_CHECKPOINTS = False
-TOTAL_TIMESTEPS = 100000
+TOTAL_TIMESTEPS = 200000
 
-HORIZON = 2048 # One episode is 200 steps for pendulum
+HORIZON = 2048
 NUM_UPDATES = int(TOTAL_TIMESTEPS / HORIZON) # 100000 / 2048 = 244
-NUM_EPOCHS = 4
+NUM_EPOCHS = 5
 NUM_MINIBATCHES = 32
 BATCH_SIZE = HORIZON // NUM_MINIBATCHES # 2048 // 32 = 64
 FRAME_STACKING = True
-NUM_FRAMES = 8
-SKIP_FRAMES = 5
+NUM_FRAMES = 6
+SKIP_FRAMES = 4
 CHECKPOINT_INTERVAL = 1000*4 # Save every 4 episodes (1000 step episodes)
 
 LEARNING_RATE = 3e-4
@@ -416,8 +416,8 @@ def train(env_name='CarRacing-v3', render_env=False, log_wandb=False):
 
             # Crucial: Only treat as 'done' if terminated (failure), not truncated (time limit)
             rewards[step] = torch.tensor(reward).to(DEVICE)
-            if (episode_steps > 100 and rewards[step-100:step].sum() < -10.0):
-                # Early termination if no progress for 100 steps
+            if (episode_steps >= 200 and rewards.numel() >= 200 and rewards[step-200:step].sum() < -19.0):
+                # Early termination if no progress for extended period
                 truncated = True
             if terminated or truncated:
                 next_state, _ = env.reset()
