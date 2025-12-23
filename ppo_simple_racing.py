@@ -509,6 +509,8 @@ if __name__ == '__main__':
     log_wandb = LOG_WANDB
     render_env = RENDER_ENV
     if TEST_MODE:
+        print("Running in TEST MODE")
         test(f"./models/{MODEL_FILE}")
     else:
+        print("Running in TRAINING MODE")
         train(env_name=env_name, render_env=render_env, log_wandb=log_wandb)
