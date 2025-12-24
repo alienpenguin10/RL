@@ -331,10 +331,10 @@ def process_action(raw_action, rolling_speed=None, steering_buffer=None):
 """ Hyperparameters """
 TEST_MODE = False
 MODEL_FILE = "ppo_1_final.pth"  # Replace with your model file for testing
-RENDER_ENV = True
-LOG_WANDB = False
+RENDER_ENV = False
+LOG_WANDB = True
 SAVE_CHECKPOINTS = False
-TOTAL_TIMESTEPS = 40000
+TOTAL_TIMESTEPS = 200000
 
 HORIZON = 4096
 NUM_UPDATES = int(TOTAL_TIMESTEPS / HORIZON) # 100000 / 2048 = 244
@@ -354,7 +354,7 @@ GAMMA = 0.99
 GAE_LAMBDA = 0.95
 EPSILONS = 0.2 # Clipping ratio for PPO
 VALUE_COEFF = 0.2
-ENTROPY_COEFF = 0.02
+ENTROPY_COEFF = 0.04
 ENTROPY_DECAY = 1.0
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
