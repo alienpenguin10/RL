@@ -312,25 +312,26 @@ MODEL_FILE = "ppo_1_final.pth"  # Replace with your model file for testing
 RENDER_ENV = False
 LOG_WANDB = True
 SAVE_CHECKPOINTS = False
-TOTAL_TIMESTEPS = 200000
+TOTAL_TIMESTEPS = 1000000
 
-HORIZON = 2048
+HORIZON = 4096
 NUM_UPDATES = int(TOTAL_TIMESTEPS / HORIZON) # 100000 / 2048 = 244
 NUM_EPOCHS = 5
 NUM_MINIBATCHES = 32
-BATCH_SIZE = HORIZON // NUM_MINIBATCHES # 2048 // 32 = 64
+BATCH_SIZE = HORIZON // NUM_MINIBATCHES # 4096 // 32 = 128
 FRAME_STACKING = True
 NUM_FRAMES = 6
 SKIP_FRAMES = 4
 CHECKPOINT_INTERVAL = 1000*4 # Save every 4 episodes (1000 step episodes)
 
 EPISODE_CUTOFF = 300  # Early termination if no progress for n steps
+CUTOFF_PENALTY = -100.0  # Penalty for early cutoff
 LEARNING_RATE = 3e-4
 GAMMA = 0.99
 GAE_LAMBDA = 0.95
 EPSILONS = 0.2 # Clipping ratio for PPO
 VALUE_COEFF = 0.5
-ENTROPY_COEFF = 0.01
+ENTROPY_COEFF = 0.04
 ENTROPY_DECAY = 0.9999
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -382,7 +383,7 @@ def train(env_name='CarRacing-v3', render_env=False, log_wandb=False):
     # Register signal handler for graceful shutdown
     signal.signal(signal.SIGINT, save_on_interrupt)
 
-    # rolling_speed = 0.0
+    rolling_speed = 0.0
     # steering_buffer = deque([], maxlen=5)
     
     while total_steps < TOTAL_TIMESTEPS:
@@ -403,8 +404,8 @@ def train(env_name='CarRacing-v3', render_env=False, log_wandb=False):
                 values[step] = torch.tensor(value).to(DEVICE)       
             actions[step] = torch.tensor(raw_action).to(DEVICE)
             log_probs[step] = torch.tensor(log_prob).to(DEVICE)
-            processed_action = process_action(raw_action)
-            # rolling_speed = 0.9999*rolling_speed + processed_action[1]*0.1 - processed_action[2]
+            processed_action = process_action(raw_action, rolling_speed=rolling_speed)
+            rolling_speed = 0.9999*rolling_speed + processed_action[1]*0.1 - processed_action[2]
             # steering_buffer.append(processed_action[0])
 
             next_state, reward, terminated, truncated, info = env.step(processed_action)
@@ -419,7 +420,7 @@ def train(env_name='CarRacing-v3', render_env=False, log_wandb=False):
             rewards[step] = torch.tensor(reward).to(DEVICE)
             if (episode_steps >= EPISODE_CUTOFF and rewards.numel() >= EPISODE_CUTOFF and rewards[step-EPISODE_CUTOFF:step].sum() < -EPISODE_CUTOFF*0.09):
                 # Early termination if no progress for extended period
-                rewards[step] += -80.0  # Large negative reward for stagnation
+                rewards[step] += CUTOFF_PENALTY + episode_steps * 0.1  # Large negative reward for stagnation reduced if car was performing well before
                 truncated = True
             if terminated or truncated:
                 next_state, _ = env.reset()
@@ -427,7 +428,7 @@ def train(env_name='CarRacing-v3', render_env=False, log_wandb=False):
                 episode_steps = 0
                 episode_rewards.append(episode_reward)
                 episode_reward = 0
-                # rolling_speed = 0.0
+                rolling_speed = 0.0
                 # steering_buffer.clear()
             state = torch.Tensor(next_state).to(DEVICE)
             total_steps += 1
