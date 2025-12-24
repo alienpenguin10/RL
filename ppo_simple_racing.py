@@ -175,7 +175,7 @@ class PPOAgent:
                 ratio = torch.exp(log_probs - b_old_log_probs)
                 surr1 = ratio * b_advantages
                 surr2 = torch.clamp(ratio, 1 - EPSILONS, 1 + EPSILONS) * b_advantages
-                policy_loss = - torch.min(surr1, surr2).mean()
+                policy_loss = -torch.min(surr1, surr2).mean()
 
                 # Value Loss Formula
                 # Value Loss = 1/2 E[(V(s) - V(s'))^2]
@@ -189,11 +189,11 @@ class PPOAgent:
                 # Total Loss = Policy Loss - ENTROPY_COEFF * Policy Entropy + VALUE_COEFF * Value Loss
                 if ENTROPY_DECAY < 1.0:
                     self.entropy_coef *= ENTROPY_DECAY
-                total_loss = policy_loss - self.entropy_coef * entropy_loss  + VALUE_COEFF * value_loss
+                total_loss = policy_loss - self.entropy_coef * entropy_loss + VALUE_COEFF * value_loss
 
                 self.optimizer.zero_grad()
                 total_loss.backward()
-                torch.nn.utils.clip_grad_norm_(self.policy.parameters(), 0.5)
+                # torch.nn.utils.clip_grad_norm_(self.policy.parameters(), 0.5)
                 self.optimizer.step()
             
         self.lr_scheduler.step()
@@ -309,13 +309,13 @@ def process_action(raw_action, rolling_speed=None, steering_buffer=None):
 """ Hyperparameters """
 TEST_MODE = False
 MODEL_FILE = "ppo_1_final.pth"  # Replace with your model file for testing
-RENDER_ENV = False
+RENDER_ENV = True
 LOG_WANDB = True
 SAVE_CHECKPOINTS = False
-TOTAL_TIMESTEPS = 18000
+TOTAL_TIMESTEPS = 60000
 
 HORIZON = 4096
-NUM_UPDATES = 75 # int(TOTAL_TIMESTEPS / HORIZON) # 100000 / 2048 = 244
+NUM_UPDATES = int(TOTAL_TIMESTEPS / HORIZON) # 100000 / 2048 = 244
 NUM_EPOCHS = 4
 NUM_MINIBATCHES = 32
 BATCH_SIZE = HORIZON // NUM_MINIBATCHES # 4096 // 32 = 128
@@ -331,9 +331,9 @@ LEARNING_RATE = 3e-4
 GAMMA = 0.99
 GAE_LAMBDA = 0.95
 EPSILONS = 0.2 # Clipping ratio for PPO
-VALUE_COEFF = 0.5
-ENTROPY_COEFF = 0.02
-ENTROPY_DECAY = 0.9999
+VALUE_COEFF = 0.3
+ENTROPY_COEFF = 0.04
+ENTROPY_DECAY = 1.0
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 def train(env_name='CarRacing-v3', render_env=False, log_wandb=False):
@@ -423,10 +423,9 @@ def train(env_name='CarRacing-v3', render_env=False, log_wandb=False):
             episode_reward += reward
 
             # Crucial: Only treat as 'done' if terminated (failure), not truncated (time limit)
-            rewards[step] = torch.tensor(reward).to(DEVICE)
-            if (episode_steps >= EPISODE_CUTOFF and rewards.numel() >= EPISODE_CUTOFF and rewards[step-EPISODE_CUTOFF:step].sum() < -EPISODE_CUTOFF*0.09):
+            if (episode_steps >= EPISODE_CUTOFF and rewards.numel() >= EPISODE_CUTOFF and rewards[step-EPISODE_CUTOFF+1:step-1].sum() < -EPISODE_CUTOFF*0.09):
                 # Early termination if no progress for extended period
-                penalty = min(CUTOFF_PENALTY + episode_steps * 0.1, 0.0) # Large negative reward for stagnation reduced if car was performing well before
+                penalty = min(CUTOFF_PENALTY + (episode_steps-EPISODE_CUTOFF) * 0.1, 0.0) # Large negative reward for stagnation reduced if car was performing well before
                 reward += penalty
                 episode_reward += penalty
                 truncated = True
@@ -434,6 +433,7 @@ def train(env_name='CarRacing-v3', render_env=False, log_wandb=False):
                 reward += TRUNCATED_PENALTY
                 episode_reward += TRUNCATED_PENALTY
             if terminated or truncated:
+                print(f"Episode {episode} finished - Steps: {episode_steps}, Reward: {episode_reward}")
                 next_state, _ = env.reset()
                 episode += 1
                 episode_steps = 0
@@ -441,6 +441,8 @@ def train(env_name='CarRacing-v3', render_env=False, log_wandb=False):
                 episode_reward = 0
                 rolling_speed = 0.0
                 # steering_buffer.clear()
+
+            rewards[step] = torch.tensor(reward).to(DEVICE)
             state = torch.Tensor(next_state).to(DEVICE)
             total_steps += 1
         
