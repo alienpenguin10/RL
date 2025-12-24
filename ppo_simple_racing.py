@@ -28,11 +28,33 @@ def layer_init(layer, std=np.sqrt(2), bias_const=0.0):
     torch.nn.init.constant_(layer.bias, bias_const)
     return layer
 
+class Normalize(nn.Module):
+    def __init__(self, scale=255.0):
+        super().__init__()
+        self.scale = scale
+    
+    def forward(self, x):
+        return x.float() / self.scale
+
 class ActorCritic(nn.Module):
     def __init__(self, num_frames, output_shape):
         super().__init__()
         # Using Orthogonal Initialization
-        self.conv = ConvNet_StackedFrames(num_frames=num_frames)
+        # self.conv = ConvNet_StackedFrames(num_frames=num_frames)
+        self.conv = nn.Sequential(
+            Normalize(255.0), # Normalize input to [0, 1]
+            nn.Conv2d(num_frames, out_channels=16, kernel_size=7, stride=4, padding=(8,2)),
+            nn.ReLU(),
+            nn.MaxPool2d(kernel_size=2, stride=2),
+            nn.Conv2d(in_channels=16, out_channels=32, kernel_size=5, stride=1, padding=1),
+            nn.ReLU(),
+            nn.Conv2d(in_channels=32, out_channels=64, kernel_size=3, stride=1),
+            nn.ReLU(),
+            nn.Conv2d(in_channels=64, out_channels=128, kernel_size=3, stride=1),
+            nn.ReLU(),
+            nn.Conv2d(in_channels=128, out_channels=256, kernel_size=3, stride=1),
+            nn.ReLU(),
+        )
         conv_size = 4096  # Output size from ConvNet (256 channels * 4 height * 4 width)
         self.critic = nn.Sequential(
             layer_init(nn.Linear(conv_size, 64)),
@@ -196,7 +218,7 @@ class PPOAgent:
                 # torch.nn.utils.clip_grad_norm_(self.policy.parameters(), 0.5)
                 self.optimizer.step()
             
-        self.lr_scheduler.step()
+        # self.lr_scheduler.step()
 
         return {
             'policy_loss': policy_loss.item(),
@@ -309,16 +331,16 @@ def process_action(raw_action, rolling_speed=None, steering_buffer=None):
 """ Hyperparameters """
 TEST_MODE = False
 MODEL_FILE = "ppo_1_final.pth"  # Replace with your model file for testing
-RENDER_ENV = False
-LOG_WANDB = True
+RENDER_ENV = True
+LOG_WANDB = False
 SAVE_CHECKPOINTS = False
-TOTAL_TIMESTEPS = 100000
+TOTAL_TIMESTEPS = 40000
 
 HORIZON = 4096
 NUM_UPDATES = int(TOTAL_TIMESTEPS / HORIZON) # 100000 / 2048 = 244
-NUM_EPOCHS = 5
-NUM_MINIBATCHES = 32
-BATCH_SIZE = HORIZON // NUM_MINIBATCHES # 4096 // 32 = 128
+NUM_EPOCHS = 4
+NUM_MINIBATCHES = 8
+BATCH_SIZE = HORIZON // NUM_MINIBATCHES # 4096 // 8 = 512
 FRAME_STACKING = True
 NUM_FRAMES = 6
 SKIP_FRAMES = 4
@@ -433,7 +455,7 @@ def train(env_name='CarRacing-v3', render_env=False, log_wandb=False):
                 reward += TRUNCATED_PENALTY
                 episode_reward += TRUNCATED_PENALTY
             if terminated or truncated:
-                print(f"Episode {episode} finished - Steps: {episode_steps}, Reward: {episode_reward}")
+                # print(f"Episode {episode} finished - Steps: {episode_steps}, Reward: {episode_reward}")
                 next_state, _ = env.reset()
                 episode += 1
                 episode_steps = 0
