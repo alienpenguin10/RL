@@ -309,14 +309,14 @@ def process_action(raw_action, rolling_speed=None, steering_buffer=None):
 """ Hyperparameters """
 TEST_MODE = False
 MODEL_FILE = "ppo_1_final.pth"  # Replace with your model file for testing
-RENDER_ENV = True
+RENDER_ENV = False
 LOG_WANDB = True
 SAVE_CHECKPOINTS = False
-TOTAL_TIMESTEPS = 60000
+TOTAL_TIMESTEPS = 100000
 
 HORIZON = 4096
 NUM_UPDATES = int(TOTAL_TIMESTEPS / HORIZON) # 100000 / 2048 = 244
-NUM_EPOCHS = 4
+NUM_EPOCHS = 5
 NUM_MINIBATCHES = 32
 BATCH_SIZE = HORIZON // NUM_MINIBATCHES # 4096 // 32 = 128
 FRAME_STACKING = True
@@ -331,8 +331,8 @@ LEARNING_RATE = 3e-4
 GAMMA = 0.99
 GAE_LAMBDA = 0.95
 EPSILONS = 0.2 # Clipping ratio for PPO
-VALUE_COEFF = 0.3
-ENTROPY_COEFF = 0.04
+VALUE_COEFF = 0.2
+ENTROPY_COEFF = 0.02
 ENTROPY_DECAY = 1.0
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -441,7 +441,7 @@ def train(env_name='CarRacing-v3', render_env=False, log_wandb=False):
                 episode_reward = 0
                 rolling_speed = 0.0
                 # steering_buffer.clear()
-
+            
             rewards[step] = torch.tensor(reward).to(DEVICE)
             state = torch.Tensor(next_state).to(DEVICE)
             total_steps += 1
@@ -473,6 +473,7 @@ def train(env_name='CarRacing-v3', render_env=False, log_wandb=False):
         log_dict = {
             "policy_loss": update_metrics['policy_loss'],
             "value_function_loss": update_metrics['value_loss'],
+            "entropy_loss": update_metrics['entropy_loss'],
             "total_loss": update_metrics['total_loss'],
             "average_episode_reward": avg_reward,
         }
