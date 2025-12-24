@@ -312,26 +312,27 @@ MODEL_FILE = "ppo_1_final.pth"  # Replace with your model file for testing
 RENDER_ENV = False
 LOG_WANDB = True
 SAVE_CHECKPOINTS = False
-TOTAL_TIMESTEPS = 1000000
+TOTAL_TIMESTEPS = 18000
 
 HORIZON = 4096
-NUM_UPDATES = int(TOTAL_TIMESTEPS / HORIZON) # 100000 / 2048 = 244
-NUM_EPOCHS = 5
+NUM_UPDATES = 75 # int(TOTAL_TIMESTEPS / HORIZON) # 100000 / 2048 = 244
+NUM_EPOCHS = 4
 NUM_MINIBATCHES = 32
 BATCH_SIZE = HORIZON // NUM_MINIBATCHES # 4096 // 32 = 128
 FRAME_STACKING = True
 NUM_FRAMES = 6
 SKIP_FRAMES = 4
-CHECKPOINT_INTERVAL = 1000*4 # Save every 4 episodes (1000 step episodes)
+CHECKPOINT_INTERVAL = HORIZON
 
 EPISODE_CUTOFF = 300  # Early termination if no progress for n steps
 CUTOFF_PENALTY = -100.0  # Penalty for early cutoff
+TRUNCATED_PENALTY = -20.0  # Penalty for episode truncation due to time limit
 LEARNING_RATE = 3e-4
 GAMMA = 0.99
 GAE_LAMBDA = 0.95
 EPSILONS = 0.2 # Clipping ratio for PPO
 VALUE_COEFF = 0.5
-ENTROPY_COEFF = 0.04
+ENTROPY_COEFF = 0.02
 ENTROPY_DECAY = 0.9999
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -359,8 +360,8 @@ def train(env_name='CarRacing-v3', render_env=False, log_wandb=False):
     env = gym.wrappers.RecordEpisodeStatistics(env)
     agent = PPOAgent(env)
 
-    state, _ = env.reset()
-    state = torch.Tensor(state).to(DEVICE)
+    # state, _ = env.reset()
+    # state = torch.Tensor(state).to(DEVICE)
     terminated = 0
     total_steps = 0
     update_count = 0
@@ -395,6 +396,11 @@ def train(env_name='CarRacing-v3', render_env=False, log_wandb=False):
         values = torch.zeros((HORIZON)).to(DEVICE)
         log_probs = torch.zeros((HORIZON)).to(DEVICE)
 
+        state, _ = env.reset()
+        state = torch.Tensor(state).to(DEVICE)
+        episode_steps = 0
+        episode_reward = 0
+
         # Rollout
         for step in range(HORIZON):
             states[step] = state
@@ -420,8 +426,13 @@ def train(env_name='CarRacing-v3', render_env=False, log_wandb=False):
             rewards[step] = torch.tensor(reward).to(DEVICE)
             if (episode_steps >= EPISODE_CUTOFF and rewards.numel() >= EPISODE_CUTOFF and rewards[step-EPISODE_CUTOFF:step].sum() < -EPISODE_CUTOFF*0.09):
                 # Early termination if no progress for extended period
-                rewards[step] += CUTOFF_PENALTY + episode_steps * 0.1  # Large negative reward for stagnation reduced if car was performing well before
+                penalty = min(CUTOFF_PENALTY + episode_steps * 0.1, 0.0) # Large negative reward for stagnation reduced if car was performing well before
+                reward += penalty
+                episode_reward += penalty
                 truncated = True
+            if truncated:
+                reward += TRUNCATED_PENALTY
+                episode_reward += TRUNCATED_PENALTY
             if terminated or truncated:
                 next_state, _ = env.reset()
                 episode += 1
