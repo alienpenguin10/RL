@@ -1,7 +1,7 @@
 import numpy as np
 import torch
 import gymnasium as gym
-from ppo_simple_agent import PPOAgent
+from agents.ppo_simple_agent import PPOAgent
 from env_wrapper import ProcessedFrame, FrameStack, ActionRemapWrapper
 import signal
 import sys
@@ -26,10 +26,10 @@ LOG_WANDB = False
 SAVE_CHECKPOINTS = False
 TOTAL_TIMESTEPS = 40000
 
-HORIZON = 2048
+HORIZON = 512
 NUM_UPDATES = int(TOTAL_TIMESTEPS / HORIZON) # 100000 / 2048 = 244
-NUM_EPOCHS = 4
-NUM_MINIBATCHES = 16
+NUM_EPOCHS = 2
+NUM_MINIBATCHES = 4
 BATCH_SIZE = HORIZON // NUM_MINIBATCHES # 4096 // 8 = 512
 FRAME_STACKING = True
 NUM_FRAMES = 6
@@ -43,8 +43,8 @@ LEARNING_RATE = 3e-4
 GAMMA = 0.99
 GAE_LAMBDA = 0.95
 EPSILONS = 0.5 # Clipping ratio for PPO
-VALUE_COEFF = 0.5
-ENTROPY_COEFF = 0.01
+VALUE_COEFF = 0.25
+ENTROPY_COEFF = 0.02
 ENTROPY_DECAY = 1.0 # Set to <1.0 to decay entropy coefficient over time
 L2_REG = 1e-2 # Set to 0.0 to disable L2 regularization
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -76,8 +76,8 @@ def train(env_name='CarRacing-v3', render_env=False, log_wandb=False):
                      LEARNING_RATE, NUM_UPDATES, ENTROPY_COEFF, ENTROPY_DECAY,
                      L2_REG)
 
-    # state, _ = env.reset()
-    # state = torch.Tensor(state).to(DEVICE)
+    state, _ = env.reset()
+    state = torch.Tensor(state).to(DEVICE)
     terminated = 0
     total_steps = 0
     update_count = 0
@@ -86,6 +86,7 @@ def train(env_name='CarRacing-v3', render_env=False, log_wandb=False):
     episode_steps = 0
     episode_reward = 0
     episode_rewards = []
+    carryover_reward = 0
 
     def save_on_interrupt(signum, frame):
         """Save model when interrupted (Ctrl+C)"""
@@ -112,9 +113,8 @@ def train(env_name='CarRacing-v3', render_env=False, log_wandb=False):
         values = torch.zeros((HORIZON)).to(DEVICE)
         log_probs = torch.zeros((HORIZON)).to(DEVICE)
 
-        state, _ = env.reset()
-        state = torch.Tensor(state).to(DEVICE)
-        episode_steps = 0
+        # state, _ = env.reset()
+        # state = torch.Tensor(state).to(DEVICE)
         episode_reward = 0
 
         # Rollout
@@ -150,7 +150,7 @@ def train(env_name='CarRacing-v3', render_env=False, log_wandb=False):
                 next_state, _ = env.reset()
                 episode += 1
                 episode_steps = 0
-                episode_rewards.append(episode_reward)
+                episode_rewards.append(episode_reward + carryover_reward)
                 episode_reward = 0
                 rolling_speed = 0.0
                 # steering_buffer.clear()
@@ -158,6 +158,7 @@ def train(env_name='CarRacing-v3', render_env=False, log_wandb=False):
             rewards[step] = torch.tensor(reward).to(DEVICE)
             state = torch.Tensor(next_state).to(DEVICE)
             total_steps += 1
+            carryover_reward = episode_reward # Saves episode reward between rollouts
         
         # Boostrap value if not done
         with torch.no_grad():
@@ -178,7 +179,7 @@ def train(env_name='CarRacing-v3', render_env=False, log_wandb=False):
         update_count += 1
         print(f"Update {update_count} completed. Total Steps: {total_steps}")
 
-        avg_reward = np.mean(episode_rewards)
+        avg_reward = np.mean(episode_rewards) if episode_rewards else 0.0
         episode_rewards = []  # Clear after logging
 
         log_dict = {

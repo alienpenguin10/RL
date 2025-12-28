@@ -2,6 +2,7 @@
 PolicyNetwork(nn.Module) and ValueNetwork(nn.Module) for VPG
 Same architecture as REINFORCE, adapted for VPG usage
 """
+import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -169,6 +170,80 @@ class ValueNetwork(nn.Module):
         x = torch.relu(self.fc2(x))
         return self.fc3(x).squeeze(-1)  # Flatten to (batch,)
 
+def layer_init(layer, std=np.sqrt(2), bias_const=0.0):
+    nn.init.orthogonal_(layer.weight, std)
+    nn.init.constant_(layer.bias, bias_const)
+    return layer
+
+class ActorCritic(nn.Module):
+    def __init__(self, obs_shape=(4, 96, 96), action_dim=2, feature_dim=512, hidden_dims=[256, 256]):
+        super().__init__()
+
+        self.cnn = ConvNet(obs_shape, feature_dim)
+        mlp_output_dim = 128
+        self.mlp = MultiLayerPerceptron(feature_dim, hidden_dims, mlp_output_dim)
+        self.act = nn.Tanh()
+
+        self.steer = layer_init(nn.Linear(mlp_output_dim, 1), std=0.01)
+        self.speed = layer_init(nn.Linear(mlp_output_dim, 1), std=0.01)
+        self.actor_logstd = nn.Parameter(torch.zeros(1, 1))  # Shared log std for both actions
+        self.critic = layer_init(nn.Linear(mlp_output_dim, 1), std=1.0)
+    
+    def forward(self, x):
+        assert isinstance(x, torch.FloatTensor), "Input must be a FloatTensor"
+
+        x = x.float() / 255.0 # Normalize input
+        if len(x.shape) == 3:
+            x = x.unsqueeze(0) # To make sure state has a batch dimension
+        
+        x = self.cnn(x)
+        x = self.mlp(x)
+
+        steer_mean = self.act(self.steer(x))
+        speed_mean = self.act(self.speed(x))
+        steer_std = torch.exp(self.actor_logstd.expand_as(steer_mean))
+        speed_std = torch.exp(self.actor_logstd.expand_as(speed_mean))
+
+        value = self.act(self.critic(x))
+
+        return steer_mean, steer_std, speed_mean, speed_std, value
+    
+    def get_action(self, state):
+        # Takes a single state -> samples a new action from policy dist
+        steer_mean, steer_std, speed_mean, speed_std, value = self.forward(state)
+        steer_dist = torch.distributions.Normal(steer_mean, steer_std)
+        speed_dist = torch.distributions.Normal(speed_mean, speed_std)
+        steer_action = steer_dist.sample()
+        speed_action = speed_dist.sample()
+        steer = steer_action.cpu().numpy().flatten()
+        speed = speed_action.cpu().numpy().flatten()
+        steer_log_prob = steer_dist.log_prob(steer_action).sum(1).cpu().numpy().flatten()
+        speed_log_prob = speed_dist.log_prob(speed_action).sum(1).cpu().numpy().flatten()
+
+        action = np.array([steer[0], speed[0]])
+        log_prob = steer_log_prob + speed_log_prob
+
+        return action, log_prob, value
+    
+    def get_value(self, state):
+        # Takes a single state -> returns value estimate
+        _, _, _, _, value = self.forward(state)
+        return value
+
+    def evaluate(self, states, actions):
+        # takes in batch of states and actions -> doesn't sample evaluates the log prob of specific action under the current policy
+        # also returns entropy regularization term
+        steer_mean, steer_std, speed_mean, speed_std, value = self.forward(states)
+        steer_dist = torch.distributions.Normal(steer_mean, steer_std)
+        speed_dist = torch.distributions.Normal(speed_mean, speed_std)
+        steer_actions = actions[:, 0].unsqueeze(1)
+        speed_actions = actions[:, 1].unsqueeze(1)
+        steer_log_prob = steer_dist.log_prob(steer_actions).sum(1)
+        speed_log_prob = speed_dist.log_prob(speed_actions).sum(1)
+        log_prob = steer_log_prob + speed_log_prob
+        entropy = steer_dist.entropy().sum(1) + speed_dist.entropy().sum(1)
+        
+        return log_prob, value, entropy
 
 class QNetwork(nn.Module):
     def __init__(self, obs_shape, action_dim, feature_dim=512, hidden_dims=[256, 256]):
