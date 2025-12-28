@@ -7,7 +7,12 @@ class BaseAgent:
         self.learning_rate = learning_rate
         self.gamma = gamma
         # Detect device here to be used by all children
-        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        if torch.backends.mps.is_available():
+            self.device = torch.device("mps")
+        elif torch.cuda.is_available():
+            self.device = torch.device("cuda")
+        else:
+            self.device = torch.device("cpu")
         
         self.clear_memory()
 
@@ -31,12 +36,20 @@ class BaseAgent:
         self.values.append(value)
 
     def preprocess_state(self, state):
-        # Input from FrameStack is (C, H, W) = (num_frames, 84, 96)
-        # We need to add batch dim: (1, C, H, W)
         if isinstance(state, np.ndarray):
-            state = torch.FloatTensor(state).unsqueeze(0)
-        return state.to(self.device)
+            # Check if state is already in (C, H, W) format
+            if state.shape[0] in [3, 4]:  # Channels-first (C, H, W)
+                state = torch.from_numpy(state).float()
+            elif state.shape[-1] in [3, 4]:  # Channels-last (H, W, C)
+                state = np.transpose(state, (2, 0, 1))  # -> (C, H, W)
+                state = torch.from_numpy(state).float()
+            else:
+                raise ValueError(f"Unexpected state shape: {state.shape}")
         
+        if state.dim() == 3:
+            state = state.unsqueeze(0)  # Add batch dimension -> (1, C, H, W)
+        
+        return state.to(self.device)
 
     def save_model(self, filepath):
         """
