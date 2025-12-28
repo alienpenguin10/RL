@@ -166,7 +166,7 @@ class PPOAgent:
         self.action_size = env.action_space.shape[0]
         # self.policy = ActorCritic(num_frames=NUM_FRAMES, output_shape=self.action_size).to(DEVICE)
         self.policy = ActorCritic(num_frames=NUM_FRAMES, output_shape=2).to(DEVICE) # Only steer and speed
-        self.optimizer = Adam(self.policy.parameters(), lr=LEARNING_RATE)
+        self.optimizer = Adam(self.policy.parameters(), lr=LEARNING_RATE, weight_decay=L2_REG)
         self.lr_scheduler = LinearLR(self.optimizer, start_factor=1.0, end_factor=0.1, total_iters=NUM_UPDATES)
         self.entropy_coef = ENTROPY_COEFF
     
@@ -331,10 +331,10 @@ def process_action(raw_action, rolling_speed=None, steering_buffer=None):
 """ Hyperparameters """
 TEST_MODE = False
 MODEL_FILE = "ppo_1_final.pth"  # Replace with your model file for testing
-RENDER_ENV = False
-LOG_WANDB = True
+RENDER_ENV = True
+LOG_WANDB = False
 SAVE_CHECKPOINTS = False
-TOTAL_TIMESTEPS = 200000
+TOTAL_TIMESTEPS = 40000
 
 HORIZON = 4096
 NUM_UPDATES = int(TOTAL_TIMESTEPS / HORIZON) # 100000 / 2048 = 244
@@ -355,7 +355,8 @@ GAE_LAMBDA = 0.95
 EPSILONS = 0.2 # Clipping ratio for PPO
 VALUE_COEFF = 0.2
 ENTROPY_COEFF = 0.04
-ENTROPY_DECAY = 1.0
+ENTROPY_DECAY = 1.0 # Set to <1.0 to decay entropy coefficient over time
+L2_REG = 1e-2 # Set to 0.0 to disable L2 regularization
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 def train(env_name='CarRacing-v3', render_env=False, log_wandb=False):
@@ -439,9 +440,6 @@ def train(env_name='CarRacing-v3', render_env=False, log_wandb=False):
             next_state, reward, terminated, truncated, info = env.step(processed_action)
             episode_steps += 1
 
-            # if "episode" in info:
-            #     print(f"Global Step: {total_steps}, Episode Return: {info['episode']['r']}, Length: {info['episode']['l']}")
-            #     episode_rewards.append(info['episode']['r'])
             episode_reward += reward
 
             # Crucial: Only treat as 'done' if terminated (failure), not truncated (time limit)
@@ -455,7 +453,7 @@ def train(env_name='CarRacing-v3', render_env=False, log_wandb=False):
                 reward += TRUNCATED_PENALTY
                 episode_reward += TRUNCATED_PENALTY
             if terminated or truncated:
-                # print(f"Episode {episode} finished - Steps: {episode_steps}, Reward: {episode_reward}")
+                print(f"Episode {episode} finished - Steps: {episode_steps}, Reward: {episode_reward}")
                 next_state, _ = env.reset()
                 episode += 1
                 episode_steps = 0
@@ -485,10 +483,8 @@ def train(env_name='CarRacing-v3', render_env=False, log_wandb=False):
 
         update_metrics = agent.update(rollouts)
         update_count += 1
+        print(f"Update {update_count} completed. Total Steps: {total_steps}")
 
-        # if len(episode_rewards) >= 10:
-        #     avg_reward = np.mean(episode_rewards[-10:])
-        #     print(f'Update {update_count}: {avg_reward}')
         avg_reward = np.mean(episode_rewards)
         episode_rewards = []  # Clear after logging
 
