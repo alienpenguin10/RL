@@ -215,7 +215,7 @@ class PPOAgent:
 
                 self.optimizer.zero_grad()
                 total_loss.backward()
-                # torch.nn.utils.clip_grad_norm_(self.policy.parameters(), 0.5)
+                torch.nn.utils.clip_grad_norm_(self.policy.parameters(), 0.5)
                 self.optimizer.step()
             
         # self.lr_scheduler.step()

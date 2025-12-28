@@ -74,9 +74,8 @@ class ActorCritic(nn.Module):
         steer_action = steer_dist.sample()
         steer = steer_action.cpu().numpy().flatten()
         steer_log_prob = steer_dist.log_prob(steer_action).sum(1).cpu().numpy().flatten()
-        action = steer
         value = self.critic(conv_features).cpu().numpy().flatten()
-        return action, steer_log_prob, value
+        return steer, steer_log_prob, value
     
     def evaluate(self, states, actions):
         # takes in batch of states and actions -> doesn't sample evaluates the log prob of specific action under the current policy
@@ -129,7 +128,7 @@ class PPOAgent:
                 ratio = torch.exp(log_probs - b_old_log_probs)
                 surr1 = ratio * b_advantages
                 surr2 = torch.clamp(ratio, 1 - EPSILONS, 1 + EPSILONS) * b_advantages
-                policy_loss = - torch.min(surr1, surr2).mean()
+                policy_loss = -torch.min(surr1, surr2).mean()
 
                 # Value Loss Formula
                 # Value Loss = 1/2 E[(V(s) - V(s'))^2]
@@ -150,7 +149,7 @@ class PPOAgent:
                 torch.nn.utils.clip_grad_norm_(self.policy.parameters(), 0.5)
                 self.optimizer.step()
             
-        self.lr_scheduler.step()
+        # self.lr_scheduler.step()
 
         return {
             'policy_loss': policy_loss.item(),
@@ -219,29 +218,32 @@ def process_action(raw_action):
 """ Hyperparameters """
 TEST_MODE = False
 MODEL_FILE = "ppo_1_final.pth"  # Replace with your model file for testing
-RENDER_ENV = False
+RENDER_ENV = True
 LOG_WANDB = False
 SAVE_CHECKPOINTS = False
-TOTAL_TIMESTEPS = 10
+TOTAL_TIMESTEPS = 50000
 
-HORIZON = 2048 # One episode is 200 steps for pendulum
+HORIZON = 4096
 NUM_UPDATES = int(TOTAL_TIMESTEPS / HORIZON) # 100000 / 2048 = 244
-NUM_EPOCHS = 5
-NUM_MINIBATCHES = 32
-BATCH_SIZE = HORIZON // NUM_MINIBATCHES # 2048 // 32 = 64
+NUM_EPOCHS = 4
+NUM_MINIBATCHES = 8
+BATCH_SIZE = HORIZON // NUM_MINIBATCHES # 4096 // 8 = 512
 FRAME_STACKING = True
-NUM_FRAMES = 5
-SKIP_FRAMES = 0
-CHECKPOINT_INTERVAL = TOTAL_TIMESTEPS // 5
-START_GAS_STEPS = 10
+NUM_FRAMES = 6
+SKIP_FRAMES = 4
+CHECKPOINT_INTERVAL = HORIZON
 
-LEARNING_RATE = 3e-4
+START_GAS_STEPS = 30 # Initial steps to just go forward with gas
+EPISODE_CUTOFF = 300  # Early termination if no progress for n steps
+CUTOFF_PENALTY = -100.0  # Penalty for early cutoff
+TRUNCATED_PENALTY = -20.0  # Penalty for episode truncation due to time limit
+LEARNING_RATE = 1e-3
 GAMMA = 0.99
 GAE_LAMBDA = 0.95
 EPSILONS = 0.2 # Clipping ratio for PPO
 VALUE_COEFF = 0.5
-ENTROPY_COEFF = 0.01
-ENTROPY_DECAY = 0.9999
+ENTROPY_COEFF = 0.02
+ENTROPY_DECAY = 1.0
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 def train(env_name='CarRacing-v3', render_env=False, log_wandb=False):
@@ -265,18 +267,19 @@ def train(env_name='CarRacing-v3', render_env=False, log_wandb=False):
     env = gym.make(f'{env_name}', render_mode='human' if render_env else None)
     env = ProcessedFrame(env)
     env = FrameStack(env, num_frames=NUM_FRAMES, skip_frames=SKIP_FRAMES)
-    env = ActionRemapWrapper(env)
     env = gym.wrappers.RecordEpisodeStatistics(env)
     agent = PPOAgent(env)
 
-    state, _ = env.reset()
-    state = torch.Tensor(state).to(DEVICE)
+    # state, _ = env.reset()
+    # state = torch.Tensor(state).to(DEVICE)
     terminated = 0
     total_steps = 0
-    episode_steps = 0
     update_count = 0
     episode = 0 # Track current episode for saving on interrupt
     checkpoint = 0
+    episode_steps = 0
+    episode_reward = 0
+    episode_rewards = []
 
     def save_on_interrupt(signum, frame):
         """Save model when interrupted (Ctrl+C)"""
@@ -299,7 +302,10 @@ def train(env_name='CarRacing-v3', render_env=False, log_wandb=False):
         values = torch.zeros((HORIZON)).to(DEVICE)
         log_probs = torch.zeros((HORIZON)).to(DEVICE)
 
-        rollout_rewards = []
+        state, _ = env.reset()
+        state = torch.Tensor(state).to(DEVICE)
+        episode_steps = 0
+        episode_reward = 0
 
         # Rollout
         for step in range(HORIZON):
@@ -319,18 +325,26 @@ def train(env_name='CarRacing-v3', render_env=False, log_wandb=False):
             next_state, reward, terminated, truncated, info = env.step(processed_action)
             episode_steps += 1
             total_steps += 1
+            episode_reward += reward
 
-            # if "episode" in info:
-            #     print(f"Global Step: {total_steps}, Episode Return: {info['episode']['r']}, Length: {info['episode']['l']}")
-            #     episode_rewards.append(info['episode']['r'])
-            rollout_rewards.append(reward)
-
-            # Crucial: Only treat as 'done' if terminated (failure), not truncated (time limit)
+            if (episode_steps >= EPISODE_CUTOFF and rewards.numel() >= EPISODE_CUTOFF and rewards[step-EPISODE_CUTOFF+1:step-1].sum() < -EPISODE_CUTOFF*0.09):
+                # Early termination if no progress for extended period
+                penalty = min(CUTOFF_PENALTY + (episode_steps-EPISODE_CUTOFF) * 0.1, 0.0) # Large negative reward for stagnation reduced if car was performing well before
+                reward += penalty
+                episode_reward += penalty
+                truncated = True
+            if truncated:
+                reward += TRUNCATED_PENALTY
+                episode_reward += TRUNCATED_PENALTY
             rewards[step] = torch.tensor(reward).to(DEVICE)
             if terminated or truncated:
+                print(f"Episode {episode} | Episode steps {episode_steps} | Episode Reward={episode_reward:.2f}")
+                episode += 1
+                episode_rewards.append(episode_reward)
                 next_state, _ = env.reset()
                 episode_steps = 0
-                episode += 1
+                episode_reward = 0
+
             state = torch.Tensor(next_state).to(DEVICE)
         
         # Boostrap value if not done
@@ -350,15 +364,15 @@ def train(env_name='CarRacing-v3', render_env=False, log_wandb=False):
 
         update_metrics = agent.update(rollouts)
         update_count += 1
+        print(f"Update {update_count} completed. Total Steps: {total_steps}")
 
-        # if len(episode_rewards) >= 10:
-        #     avg_reward = np.mean(episode_rewards[-10:])
-        #     print(f'Update {update_count}: {avg_reward}')
-        avg_reward = np.mean(rollout_rewards)
+        avg_reward = np.mean(episode_rewards)
+        episode_rewards = []  # Clear after logging
 
         log_dict = {
             "policy_loss": update_metrics['policy_loss'],
             "value_function_loss": update_metrics['value_loss'],
+            "entropy_loss": update_metrics['entropy_loss'],
             "total_loss": update_metrics['total_loss'],
             "average_episode_reward": avg_reward,
         }
@@ -382,10 +396,9 @@ def train(env_name='CarRacing-v3', render_env=False, log_wandb=False):
     env.close()
 
 def test(model_path="./models/ppo_final.pth"):
-    env = gym.make(f'{env_name}', render_mode='human' if render_env else None)
+    env = gym.make(f'{env_name}', render_mode='human' if RENDER_ENV else None)
     env = ProcessedFrame(env)
     env = FrameStack(env, num_frames=NUM_FRAMES, skip_frames=SKIP_FRAMES)
-    env = ActionRemapWrapper(env)
     env = gym.wrappers.RecordEpisodeStatistics(env)
     agent = PPOAgent(env)
     agent.load_model(model_path)
@@ -416,9 +429,9 @@ if __name__ == '__main__':
     os.makedirs("./models", exist_ok=True)
 
     env_name = 'CarRacing-v3'
-    log_wandb = LOG_WANDB
-    render_env = RENDER_ENV
     if TEST_MODE:
+        print("Running in TEST MODE")
         test(f"./models/{MODEL_FILE}")
     else:
-        train(env_name=env_name, render_env=render_env, log_wandb=log_wandb)
+        print("Running in TRAINING MODE")
+        train(env_name=env_name, render_env=RENDER_ENV, log_wandb=LOG_WANDB)
