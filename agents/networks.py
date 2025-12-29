@@ -190,7 +190,7 @@ class ActorCritic(nn.Module):
         self.critic = layer_init(nn.Linear(mlp_output_dim, 1), std=1.0)
     
     def forward(self, x):
-        assert isinstance(x, torch.FloatTensor), "Input must be a FloatTensor"
+        assert isinstance(x, torch.Tensor), "Input must be a tensor"
 
         x = x.float() / 255.0 # Normalize input
         if len(x.shape) == 3:
