@@ -2,6 +2,7 @@ import numpy as np
 import torch
 import gymnasium as gym
 from agents.ppo_simple_agent import PPOAgent
+from agents.recording_buffer import RecordingBuffer
 from env_wrapper import ProcessedFrame, FrameStack, ActionRemapWrapper
 import signal
 import sys
@@ -26,11 +27,11 @@ LOG_WANDB = False
 SAVE_CHECKPOINTS = False
 TOTAL_TIMESTEPS = 40000
 
-HORIZON = 512
+HORIZON = 2048
 NUM_UPDATES = int(TOTAL_TIMESTEPS / HORIZON) # 100000 / 2048 = 244
-NUM_EPOCHS = 2
-NUM_MINIBATCHES = 4
-BATCH_SIZE = HORIZON // NUM_MINIBATCHES # 4096 // 8 = 512
+NUM_EPOCHS = 4
+NUM_MINIBATCHES = 8
+BATCH_SIZE = HORIZON // NUM_MINIBATCHES # 2048 // 8 = 256
 FRAME_STACKING = True
 NUM_FRAMES = 6
 SKIP_FRAMES = 4
@@ -87,6 +88,7 @@ def train(env_name='CarRacing-v3', render_env=False, log_wandb=False):
     episode_reward = 0
     episode_rewards = []
     carryover_reward = 0
+    episode_recording = RecordingBuffer(capacity=1000) # episode is max 1000 steps
 
     def save_on_interrupt(signum, frame):
         """Save model when interrupted (Ctrl+C)"""
@@ -100,6 +102,13 @@ def train(env_name='CarRacing-v3', render_env=False, log_wandb=False):
     
     # Register signal handler for graceful shutdown
     signal.signal(signal.SIGINT, save_on_interrupt)
+
+    def save_episode_recording(episode_num, episode_reward, recording_buffer):
+        """Save episode recording to NPZ file"""
+        replay_path = f"./models/replay/ppo_replay_ep{episode_num}_reward{int(episode_reward)}.npz"
+        states, actions = recording_buffer.get_recording()
+        np.savez(replay_path, states=states, actions=actions)
+        print(f"Replay saved to {replay_path}")
 
     rolling_speed = 0.0
     # steering_buffer = deque([], maxlen=5)
@@ -115,7 +124,7 @@ def train(env_name='CarRacing-v3', render_env=False, log_wandb=False):
 
         # state, _ = env.reset()
         # state = torch.Tensor(state).to(DEVICE)
-        episode_reward = 0
+        episode_reward += carryover_reward
 
         # Rollout
         for step in range(HORIZON):
@@ -146,15 +155,22 @@ def train(env_name='CarRacing-v3', render_env=False, log_wandb=False):
                 reward += TRUNCATED_PENALTY
                 episode_reward += TRUNCATED_PENALTY
             if terminated or truncated:
-                print(f"Episode {episode} finished - Steps: {episode_steps}, Reward: {episode_reward}")
+                # print(f"Episode {episode} finished - Steps: {episode_steps}, Reward: {episode_reward}")
+                if episode_reward > 100.0:
+                    episode_slice = slice(step-episode_steps+1, step)
+                    episode_recording.push_batch(states[episode_slice].cpu().numpy(), 
+                                                actions[episode_slice].cpu().numpy())
+                    save_episode_recording(episode, episode_reward, episode_recording)
+                    episode_recording.clear() # Reset for next episode
+                
                 next_state, _ = env.reset()
                 episode += 1
                 episode_steps = 0
-                episode_rewards.append(episode_reward + carryover_reward)
+                episode_rewards.append(episode_reward)
                 episode_reward = 0
                 rolling_speed = 0.0
                 # steering_buffer.clear()
-            
+
             rewards[step] = torch.tensor(reward).to(DEVICE)
             state = torch.Tensor(next_state).to(DEVICE)
             total_steps += 1
@@ -177,7 +193,7 @@ def train(env_name='CarRacing-v3', render_env=False, log_wandb=False):
 
         update_metrics = agent.update(rollouts)
         update_count += 1
-        print(f"Update {update_count} completed. Total Steps: {total_steps}")
+        # print(f"Update {update_count} completed. Total Steps: {total_steps}")
 
         avg_reward = np.mean(episode_rewards) if episode_rewards else 0.0
         episode_rewards = []  # Clear after logging
@@ -233,6 +249,9 @@ def test(model_path="./models/ppo_final.pth"):
 if __name__ == '__main__':
     # Ensure models directory exists
     os.makedirs("./models", exist_ok=True)
+
+    # Ensure replay directory exists
+    os.makedirs("./models/replay", exist_ok=True)
 
     env_name = 'CarRacing-v3'
     log_wandb = LOG_WANDB
