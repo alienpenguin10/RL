@@ -23,9 +23,9 @@ load_dotenv()
 TEST_MODE = False
 MODEL_FILE = "ppo_1_final.pth"  # Replace with your model file for testing
 RENDER_ENV = False
-LOG_WANDB = False
+LOG_WANDB = True
 SAVE_CHECKPOINTS = False
-TOTAL_TIMESTEPS = 40000
+TOTAL_TIMESTEPS = 100000
 
 HORIZON = 2048
 NUM_UPDATES = int(TOTAL_TIMESTEPS / HORIZON) # 100000 / 2048 = 244
@@ -156,7 +156,7 @@ def train(env_name='CarRacing-v3', render_env=False, log_wandb=False):
                 episode_reward += TRUNCATED_PENALTY
             if terminated or truncated:
                 # print(f"Episode {episode} finished - Steps: {episode_steps}, Reward: {episode_reward}")
-                if episode_reward > 100.0:
+                if episode_reward > 200.0:
                     episode_slice = slice(step-episode_steps+1, step)
                     episode_recording.push_batch(states[episode_slice].cpu().numpy(), 
                                                 actions[episode_slice].cpu().numpy())
