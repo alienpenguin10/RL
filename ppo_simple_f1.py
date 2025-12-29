@@ -40,7 +40,7 @@ class ActorCritic(nn.Module):
             nn.Flatten(),
             layer_init(nn.Linear(64 * 7 * 7, 512)), # 3136 → 512
             nn.ReLU()
-        )   
+        )
         # Using Orthogonal Initialization
         self.critic = layer_init(nn.Linear(512, 1), std=1.0)
         

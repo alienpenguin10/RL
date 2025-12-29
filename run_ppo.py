@@ -22,7 +22,7 @@ load_dotenv()
 """ Hyperparameters """
 TEST_MODE = False
 MODEL_FILE = "ppo_1_final.pth"  # Replace with your model file for testing
-RENDER_ENV = False
+RENDER_ENV = True
 LOG_WANDB = True
 SAVE_CHECKPOINTS = False
 TOTAL_TIMESTEPS = 100000
@@ -155,7 +155,7 @@ def train(env_name='CarRacing-v3', render_env=False, log_wandb=False):
                 reward += TRUNCATED_PENALTY
                 episode_reward += TRUNCATED_PENALTY
             if terminated or truncated:
-                # print(f"Episode {episode} finished - Steps: {episode_steps}, Reward: {episode_reward}")
+                print(f"Episode {episode} finished - Steps: {episode_steps}, Reward: {episode_reward}")
                 if episode_reward > 200.0:
                     episode_slice = slice(step-episode_steps+1, step)
                     episode_recording.push_batch(states[episode_slice].cpu().numpy(), 
@@ -193,10 +193,10 @@ def train(env_name='CarRacing-v3', render_env=False, log_wandb=False):
 
         update_metrics = agent.update(rollouts)
         update_count += 1
-        # print(f"Update {update_count} completed. Total Steps: {total_steps}")
-
         avg_reward = np.mean(episode_rewards) if episode_rewards else 0.0
         episode_rewards = []  # Clear after logging
+
+        print(f"Update {update_count} completed. Total Steps: {total_steps}. Average Episode Reward: {avg_reward:.2f}")
 
         log_dict = {
             "policy_loss": update_metrics['policy_loss'],
