@@ -27,21 +27,21 @@ LOG_WANDB = True
 SAVE_CHECKPOINTS = True
 TOTAL_TIMESTEPS = 800000
 
-POLICY_OUTPUTS = 2  # Number of outputs from policy network - 2: steer and speed; 3: steer, gas, brake
-HORIZON = 2048
-NUM_UPDATES = int(TOTAL_TIMESTEPS / HORIZON) # 100000 / 2048 = 244
+POLICY_OUTPUTS = 2 # Number of outputs from policy network - 2: steer and speed; 3: steer, gas, brake
+HORIZON = 4096
+NUM_UPDATES = int(TOTAL_TIMESTEPS / HORIZON)
 NUM_EPOCHS = 4
 NUM_MINIBATCHES = 8
-BATCH_SIZE = HORIZON // NUM_MINIBATCHES # 2048 // 8 = 256
+BATCH_SIZE = HORIZON // NUM_MINIBATCHES
 FRAME_STACKING = True
 NUM_FRAMES = 4
 SKIP_FRAMES = 0
-CHECKPOINT_INTERVAL = 10000
+CHECKPOINT_INTERVAL = 50000
 RECORDING_THRESHOLD = 800.0  # Minimum reward to save episode recording
 
-EPISODE_CUTOFF = 1001  # Early termination if no progress for n steps
-CUTOFF_PENALTY = -100.0  # Penalty for early cutoff
-TRUNCATED_PENALTY = -20.0  # Penalty for episode truncation due to time limit
+EPISODE_CUTOFF = 1001 # Early termination if no progress for n steps
+CUTOFF_PENALTY = -100.0 # Penalty for early cutoff
+TRUNCATED_PENALTY = -20.0 # Penalty for episode truncation due to time limit
 LEARNING_RATE = 3e-4
 GAMMA = 0.99
 GAE_LAMBDA = 0.95
