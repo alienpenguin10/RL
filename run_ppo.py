@@ -22,9 +22,9 @@ load_dotenv()
 """ Hyperparameters """
 TEST_MODE = False
 MODEL_FILE = "ppo_1_final.pth"  # Replace with your model file for testing
-RENDER_ENV = True
+RENDER_ENV = False
 LOG_WANDB = True
-SAVE_CHECKPOINTS = False
+SAVE_CHECKPOINTS = True
 TOTAL_TIMESTEPS = 800000
 
 POLICY_OUTPUTS = 2  # Number of outputs from policy network - 2: steer and speed; 3: steer, gas, brake
@@ -36,7 +36,8 @@ BATCH_SIZE = HORIZON // NUM_MINIBATCHES # 2048 // 8 = 256
 FRAME_STACKING = True
 NUM_FRAMES = 4
 SKIP_FRAMES = 0
-CHECKPOINT_INTERVAL = HORIZON
+CHECKPOINT_INTERVAL = 10000
+RECORDING_THRESHOLD = 800.0  # Minimum reward to save episode recording
 
 EPISODE_CUTOFF = 1001  # Early termination if no progress for n steps
 CUTOFF_PENALTY = -100.0  # Penalty for early cutoff
@@ -154,7 +155,7 @@ def train(env_name='CarRacing-v3', render_env=False, log_wandb=False):
                 episode_reward += TRUNCATED_PENALTY
             if terminated or truncated:
                 print(f"Episode {episode} finished - Steps: {episode_steps}, Reward: {episode_reward}")
-                if episode_reward > -200.0:
+                if episode_reward > RECORDING_THRESHOLD:
                     episode_slice = slice(step-episode_steps+1, step+1)
                     episode_recording.push_batch(states[episode_slice].cpu().numpy(), 
                                                 actions[episode_slice].cpu().numpy())
