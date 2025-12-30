@@ -229,7 +229,7 @@ def train(env_name='CarRacing-v3', render_env=False, log_wandb=False):
     env.close()
 
 def test(model_path="./models/ppo_final.pth"):
-    env = gym.make(f'{env_name}', render_mode='human' if render_env else None)
+    env = gym.make(f'{env_name}', render_mode='human')
     env = ProcessedFrame(env)
     env = FrameStack(env, num_frames=NUM_FRAMES, skip_frames=SKIP_FRAMES)
     env = gym.wrappers.RecordEpisodeStatistics(env)
