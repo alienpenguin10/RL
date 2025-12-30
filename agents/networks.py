@@ -175,30 +175,24 @@ class ValueNetwork(nn.Module):
         x = torch.relu(self.fc2(x))
         return self.fc3(x).squeeze(-1)  # Flatten to (batch,)
 
-
-class ActorCriticBeta(nn.Module):
+class ActorCritic(nn.Module):
     def __init__(self, obs_shape=(4, 96, 96), action_dim=2, feature_dim=512, hidden_dims=[256, 256]):
         super().__init__()
         self.state_dims = obs_shape
         self.action_dim = action_dim
-        mlp_output_dim = 128
         
         self.cnn = ConvNet(obs_shape, feature_dim)
-        self.mlp = MultiLayerPerceptron(feature_dim, hidden_dims, mlp_output_dim)
-
         # actor outputs alpha and beta parameters for Beta distribution for each action dimension
-        self.actor = layer_init(nn.Linear(mlp_output_dim, action_dim*2), std=0.01)
-        self.critic = layer_init(nn.Linear(mlp_output_dim, 1), std=1.0)
+        self.actor = layer_init(nn.Linear(feature_dim, action_dim*2), std=0.01)
+        self.critic = layer_init(nn.Linear(feature_dim, 1), std=1.0)
     
     def forward(self, x):
         assert isinstance(x, torch.Tensor), "Input must be a tensor"
-
         if len(x.shape) == 3:
             x = x.unsqueeze(0) # To make sure state has a batch dimension
         
         x = self.cnn(x)
-        x = self.mlp(x)
-
+        
         # Get Alpha and Beta parameters
         # We use Softplus + 1.0 to ensure alpha, beta >= 1.0.
         # This constrains the Beta distribution to be unimodal (bell-shaped),

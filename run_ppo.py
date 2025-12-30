@@ -22,7 +22,7 @@ load_dotenv()
 """ Hyperparameters """
 TEST_MODE = False
 MODEL_FILE = "ppo_1_final.pth"  # Replace with your model file for testing
-RENDER_ENV = True
+RENDER_ENV = False
 LOG_WANDB = True
 SAVE_CHECKPOINTS = False
 TOTAL_TIMESTEPS = 100000
@@ -43,8 +43,8 @@ TRUNCATED_PENALTY = -20.0  # Penalty for episode truncation due to time limit
 LEARNING_RATE = 3e-4
 GAMMA = 0.99
 GAE_LAMBDA = 0.95
-EPSILONS = 0.5 # Clipping ratio for PPO
-VALUE_COEFF = 0.25
+EPSILONS = 0.1 # Clipping ratio for PPO
+VALUE_COEFF = 0.01
 ENTROPY_COEFF = 0.02
 ENTROPY_DECAY = 1.0 # Set to <1.0 to decay entropy coefficient over time
 L2_REG = 1e-2 # Set to 0.0 to disable L2 regularization
@@ -71,7 +71,7 @@ def train(env_name='CarRacing-v3', render_env=False, log_wandb=False):
     env = ProcessedFrame(env)
     env = FrameStack(env, num_frames=NUM_FRAMES, skip_frames=SKIP_FRAMES)
     env = gym.wrappers.RecordEpisodeStatistics(env)
-    agent = PPOAgent(DEVICE, env, NUM_FRAMES, NUM_EPOCHS, BATCH_SIZE,
+    agent = PPOAgent(DEVICE, env, NUM_EPOCHS, BATCH_SIZE,
                      GAMMA, GAE_LAMBDA, VALUE_COEFF, EPSILONS,
                      LEARNING_RATE, NUM_UPDATES, ENTROPY_COEFF, ENTROPY_DECAY,
                      L2_REG)
@@ -154,7 +154,7 @@ def train(env_name='CarRacing-v3', render_env=False, log_wandb=False):
                 episode_reward += TRUNCATED_PENALTY
             if terminated or truncated:
                 print(f"Episode {episode} finished - Steps: {episode_steps}, Reward: {episode_reward}")
-                if episode_reward > 200.0:
+                if episode_reward > 800.0:
                     episode_slice = slice(step-episode_steps+1, step)
                     episode_recording.push_batch(states[episode_slice].cpu().numpy(), 
                                                 actions[episode_slice].cpu().numpy())
