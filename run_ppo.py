@@ -107,7 +107,7 @@ def train(env_name='CarRacing-v3', render_env=False, log_wandb=False):
         """Save episode recording to NPZ file"""
         replay_path = f"./models/replay/ppo_replay_ep{episode_num}_reward{int(episode_reward)}.npz"
         states, actions = recording_buffer.get_recording()
-        np.savez(replay_path, states=states, actions=actions)
+        np.savez_compressed(replay_path, states=states, actions=actions)
         print(f"Replay saved to {replay_path}")
 
     rolling_speed = 0.0
