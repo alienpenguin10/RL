@@ -110,20 +110,7 @@ class PPOAgent:
     def process_action(self, raw_action, rolling_speed=None, steering_buffer=None):
         # print(f"Raw action from policy: {raw_action}")
 
-        # Scale from Tanh output to [-1, 1] and [0, 1]
-        # keep relative probabilities
-        steer = raw_action[0]
-        if steer < -0.66:
-            steer = max((steer + 0.66) / 2.0 - 0.66, -1.0)
-        elif steer > 0.66:
-            steer = min((steer - 0.66) / 2.0 + 0.66, 1.0)
-
         speed = raw_action[1]
-        if speed < -0.66:
-            speed = max((speed + 0.66) / 2.0 - 0.66, -1.0)
-        elif speed > 0.66:
-            speed = min((speed - 0.66) / 2.0 + 0.66, 1.0)
-        # Allow only one input and scale to [0, 1]
         if speed > 0:
             gas = speed
             brake = 0.0
