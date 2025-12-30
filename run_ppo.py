@@ -78,7 +78,6 @@ def train(env_name='CarRacing-v3', render_env=False, log_wandb=False):
 
     state, _ = env.reset()
     state = torch.Tensor(state).to(DEVICE)
-    terminated = 0
     total_steps = 0
     update_count = 0
     episode = 0 # Track current episode for saving on interrupt
@@ -118,6 +117,7 @@ def train(env_name='CarRacing-v3', render_env=False, log_wandb=False):
         actions = torch.zeros((HORIZON, 2)).to(DEVICE)  # Only steer and speed
         rewards = torch.zeros((HORIZON)).to(DEVICE)
         terminateds = torch.zeros((HORIZON)).to(DEVICE)
+        truncateds = torch.zeros((HORIZON)).to(DEVICE)
         values = torch.zeros((HORIZON)).to(DEVICE)
         log_probs = torch.zeros((HORIZON)).to(DEVICE)
 
@@ -128,7 +128,6 @@ def train(env_name='CarRacing-v3', render_env=False, log_wandb=False):
         # Rollout
         for step in range(HORIZON):
             states[step] = state
-            terminateds[step] = torch.tensor(terminated).to(DEVICE)
             with torch.no_grad():
                 raw_action, log_prob, value = agent.policy.get_action(state)
                 values[step] = torch.tensor(value).to(DEVICE)       
@@ -170,6 +169,8 @@ def train(env_name='CarRacing-v3', render_env=False, log_wandb=False):
                 rolling_speed = 0.0
                 # steering_buffer.clear()
 
+            terminateds[step] = torch.tensor(terminated).to(DEVICE)
+            truncateds[step] = torch.tensor(truncated).to(DEVICE)
             rewards[step] = torch.tensor(reward).to(DEVICE)
             state = torch.Tensor(next_state).to(DEVICE)
             total_steps += 1
@@ -179,7 +180,7 @@ def train(env_name='CarRacing-v3', render_env=False, log_wandb=False):
         with torch.no_grad():
             next_value = agent.policy.get_value(state).reshape(-1)
 
-        returns, advantages = agent.compute_gae(rewards, values, terminated, terminateds, next_value)
+        returns, advantages = agent.compute_gae(rewards, values, terminateds, truncateds, next_value)
         
         rollouts = {
             'states': states,
@@ -212,7 +213,6 @@ def train(env_name='CarRacing-v3', render_env=False, log_wandb=False):
         if SAVE_CHECKPOINTS and (total_steps >= checkpoint):
             agent.save_model(f"./models/ppo_{episode}_checkpoint.pth")
             checkpoint += CHECKPOINT_INTERVAL
-    
     
     # Save final model
     print(f"\nTraining complete! Saving final model...")

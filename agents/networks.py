@@ -181,136 +181,13 @@ class ActorCriticBeta(nn.Module):
         super().__init__()
         self.state_dims = obs_shape
         self.action_dim = action_dim
-        # mlp_output_dim = 128
+        mlp_output_dim = 128
         
         self.cnn = ConvNet(obs_shape, feature_dim)
-        # self.mlp = MultiLayerPerceptron(feature_dim, hidden_dims, mlp_output_dim)
+        self.mlp = MultiLayerPerceptron(feature_dim, hidden_dims, mlp_output_dim)
 
         # actor outputs alpha and beta parameters for Beta distribution for each action dimension
-        self.actor = layer_init(nn.Linear(feature_dim, action_dim*2), std=0.01)
-        self.critic = layer_init(nn.Linear(feature_dim, 1), std=1.0)
-    
-    def forward(self, x):
-        assert isinstance(x, torch.Tensor), "Input must be a tensor"
-
-        if len(x.shape) == 3:
-            x = x.unsqueeze(0) # To make sure state has a batch dimension
-        
-        x = self.cnn(x)
-        # x = self.mlp(x)
-
-        # Get Alpha and Beta parameters
-        # We use Softplus + 1.0 to ensure alpha, beta >= 1.0.
-        # This constrains the Beta distribution to be unimodal (bell-shaped),
-        # preventing the "U-shaped" bimodality that destabilizes training.
-        policy_output = self.actor(x)
-        # steer_alpha = (F.softplus(policy_output[:, 0]) + 1.0).unsqueeze(1)
-        # steer_beta = (F.softplus(policy_output[:, 1]) + 1.0).unsqueeze(1)
-        # speed_alpha = (F.softplus(policy_output[:, 2]) + 1.0).unsqueeze(1)
-        # speed_beta = (F.softplus(policy_output[:, 3]) + 1.0).unsqueeze(1)
-
-        alpha_beta = F.softplus(policy_output) + 1.0
-        alpha, beta = torch.chunk(alpha_beta, 2, dim=-1)
-
-        value = self.critic(x)
-
-        # return steer_alpha, steer_beta, speed_alpha, speed_beta, value
-        return alpha, beta, value
-    
-    def get_action(self, state):
-        # Takes a single state -> samples a new action from policy dist
-        # steer_alpha, steer_beta, speed_alpha, speed_beta, value = self.forward(state)
-        # steer_dist = torch.distributions.Beta(steer_alpha, steer_beta)
-        # speed_dist = torch.distributions.Beta(speed_alpha, speed_beta)
-        # steer_action = steer_dist.sample()
-        # speed_action = speed_dist.sample()
-        # steer = steer_action.cpu().numpy().flatten() * 2 - 1  # Scale to [-1, 1]
-        # speed = speed_action.cpu().numpy().flatten() * 2 - 1  # Scale to [-1, 1]
-        alpha, beta, value = self.forward(state)
-        dist = torch.distributions.Beta(alpha, beta)
-        sample = dist.sample()
-
-        # Log Prob Correction
-        # When transforming a variable, we must correct the density.
-        # y = 2x - 1, dy/dx = 2.
-        # log_prob(y) = log_prob(x) - log(|dy/dx|) = log_prob(x) - log(2)
-        # steer_log_prob_per_dim = steer_dist.log_prob(steer_action)
-        # speed_log_prob_per_dim = speed_dist.log_prob(speed_action)
-        # steer_log_prob_per_dim -= torch.log(torch.tensor(2.0))
-        # speed_log_prob_per_dim -= torch.log(torch.tensor(2.0))
-        # steer_log_prob = steer_log_prob_per_dim.sum(1).cpu().numpy().flatten()
-        # speed_log_prob = speed_log_prob_per_dim.sum(1).cpu().numpy().flatten()
-        log_prob_per_dim = dist.log_prob(sample)
-        log_prob_per_dim -= torch.log(torch.tensor(2.0))
-        log_prob = log_prob_per_dim.sum(1).cpu().numpy().flatten()
-
-        # action = np.array([steer[0], speed[0]])
-        # log_prob = steer_log_prob + speed_log_prob
-
-        action = (sample.cpu().numpy().flatten() * 2) - 1  # Scale to [-1, 1]
-
-        return action, log_prob, value
-    
-    def get_value(self, state):
-        # Takes a single state -> returns value estimate
-        # _, _, _, _, value = self.forward(state)
-        _, _, value = self.forward(state)
-        return value
-    
-    def evaluate(self, states, actions):
-        # takes in batch of states and actions -> doesn't sample evaluates the log prob of specific action under the current policy
-        # also returns entropy regularization term
-        # steer_alpha, steer_beta, speed_alpha, speed_beta, value = self.forward(states)
-        # steer_dist = torch.distributions.Beta(steer_alpha, steer_beta)
-        # speed_dist = torch.distributions.Beta(speed_alpha, speed_beta)
-        alpha, beta, value = self.forward(states)
-        dist = torch.distributions.Beta(alpha, beta)
-        
-        # Inverse Transformation
-        # The 'actions' passed here are from the reply buffer (Env space)
-        # Rescale actions from [-1, 1] to [0, 1] for Beta distribution
-        # y = x*2-1 -> x = (y + 1) / 2
-        # steer_actions = (actions[:, 0] + 1) / 2
-        # speed_actions = (actions[:, 1] + 1) / 2
-        sample_actions = torch.stack(
-            [(actions[:, 0] + 1) / 2,
-             (actions[:, 1] + 1) / 2],
-            dim=1)
-        # Numerical stability: clamp to avoid exact 0 or 1 which can cause inf log_prob
-        # steer_actions = torch.clamp(steer_actions, 1e-6, 1.0 - 1e-6)
-        # speed_actions = torch.clamp(speed_actions, 1e-6, 1.0 - 1e-6)
-        # steer_actions = steer_actions.unsqueeze(1)
-        # speed_actions = speed_actions.unsqueeze(1)
-        # steer_log_prob_per_dim = steer_dist.log_prob(steer_actions)
-        # speed_log_prob_per_dim = speed_dist.log_prob(speed_actions)
-        sample_actions = torch.clamp(sample_actions, 1e-6, 1.0 - 1e-6)
-        log_prob_per_dim = dist.log_prob(sample_actions)
-        # Log Prob Correction for scaling
-        # steer_log_prob_per_dim -= torch.log(torch.tensor(2.0))
-        # speed_log_prob_per_dim -= torch.log(torch.tensor(2.0))
-        # steer_log_prob = steer_log_prob_per_dim.sum(1)
-        # speed_log_prob = speed_log_prob_per_dim.sum(1)
-        log_prob_per_dim -= torch.log(torch.tensor(2.0)) 
-        log_prob = log_prob_per_dim.sum(dim=1)
-        
-        # log_prob = steer_log_prob + speed_log_prob
-        # entropy = steer_dist.entropy().sum(1) + speed_dist.entropy().sum(1)
-        entropy = dist.entropy().sum(dim=1)
-        
-        return log_prob, value, entropy
-
-class ActorCritic(nn.Module):
-    def __init__(self, obs_shape=(4, 96, 96), action_dim=2, feature_dim=512, hidden_dims=[256, 256]):
-        super().__init__()
-
-        self.cnn = ConvNet(obs_shape, feature_dim)
-        mlp_output_dim = 128
-        self.mlp = MultiLayerPerceptron(feature_dim, hidden_dims, mlp_output_dim)
-        self.act = nn.Tanh()
-
-        self.steer = layer_init(nn.Linear(mlp_output_dim, 1), std=0.01)
-        self.speed = layer_init(nn.Linear(mlp_output_dim, 1), std=0.01)
-        self.actor_logstd = nn.Parameter(torch.zeros(1, 1))  # Shared log std for both actions
+        self.actor = layer_init(nn.Linear(mlp_output_dim, action_dim*2), std=0.01)
         self.critic = layer_init(nn.Linear(mlp_output_dim, 1), std=1.0)
     
     def forward(self, x):
@@ -322,49 +199,64 @@ class ActorCritic(nn.Module):
         x = self.cnn(x)
         x = self.mlp(x)
 
-        steer_mean = self.act(self.steer(x))
-        speed_mean = self.act(self.speed(x))
-        steer_std = torch.exp(self.actor_logstd.expand_as(steer_mean))
-        speed_std = torch.exp(self.actor_logstd.expand_as(speed_mean))
+        # Get Alpha and Beta parameters
+        # We use Softplus + 1.0 to ensure alpha, beta >= 1.0.
+        # This constrains the Beta distribution to be unimodal (bell-shaped),
+        # preventing the "U-shaped" bimodality that destabilizes training.
+        policy_output = self.actor(x)
+        alpha_beta = F.softplus(policy_output) + 1.0
+        alpha, beta = torch.chunk(alpha_beta, 2, dim=-1)
 
-        value = self.act(self.critic(x))
+        value = self.critic(x)
 
-        return steer_mean, steer_std, speed_mean, speed_std, value
+        # return steer_alpha, steer_beta, speed_alpha, speed_beta, value
+        return alpha, beta, value
     
     def get_action(self, state):
         # Takes a single state -> samples a new action from policy dist
-        steer_mean, steer_std, speed_mean, speed_std, value = self.forward(state)
-        steer_dist = torch.distributions.Normal(steer_mean, steer_std)
-        speed_dist = torch.distributions.Normal(speed_mean, speed_std)
-        steer_action = steer_dist.sample()
-        speed_action = speed_dist.sample()
-        steer = steer_action.cpu().numpy().flatten()
-        speed = speed_action.cpu().numpy().flatten()
-        steer_log_prob = steer_dist.log_prob(steer_action).sum(1).cpu().numpy().flatten()
-        speed_log_prob = speed_dist.log_prob(speed_action).sum(1).cpu().numpy().flatten()
+        alpha, beta, value = self.forward(state)
+        dist = torch.distributions.Beta(alpha, beta)
+        sample = dist.sample()
 
-        action = np.array([steer[0], speed[0]])
-        log_prob = steer_log_prob + speed_log_prob
+        action = (sample.cpu().numpy().flatten() * 2) - 1  # Scale to [-1, 1]
+
+        # Log Prob Correction
+        # When transforming a variable, we must correct the density.
+        # y = 2x - 1, dy/dx = 2.
+        # log_prob(y) = log_prob(x) - log(|dy/dx|) = log_prob(x) - log(2)
+        log_prob_per_dim = dist.log_prob(sample)
+        log_prob_per_dim -= torch.log(torch.tensor(2.0))
+        log_prob = log_prob_per_dim.sum(1).cpu().numpy().flatten()
 
         return action, log_prob, value
     
     def get_value(self, state):
         # Takes a single state -> returns value estimate
-        _, _, _, _, value = self.forward(state)
+        _, _, value = self.forward(state)
         return value
-
+    
     def evaluate(self, states, actions):
         # takes in batch of states and actions -> doesn't sample evaluates the log prob of specific action under the current policy
         # also returns entropy regularization term
-        steer_mean, steer_std, speed_mean, speed_std, value = self.forward(states)
-        steer_dist = torch.distributions.Normal(steer_mean, steer_std)
-        speed_dist = torch.distributions.Normal(speed_mean, speed_std)
-        steer_actions = actions[:, 0].unsqueeze(1)
-        speed_actions = actions[:, 1].unsqueeze(1)
-        steer_log_prob = steer_dist.log_prob(steer_actions).sum(1)
-        speed_log_prob = speed_dist.log_prob(speed_actions).sum(1)
-        log_prob = steer_log_prob + speed_log_prob
-        entropy = steer_dist.entropy().sum(1) + speed_dist.entropy().sum(1)
+        alpha, beta, value = self.forward(states)
+        dist = torch.distributions.Beta(alpha, beta)
+        
+        # Inverse Transformation
+        # The 'actions' passed here are from the reply buffer (Env space)
+        # Rescale actions from [-1, 1] to [0, 1] for Beta distribution
+        # y = x*2-1 -> x = (y + 1) / 2
+        sample_actions = torch.stack(
+            [(actions[:, 0] + 1) / 2,
+             (actions[:, 1] + 1) / 2],
+            dim=1)
+        # Numerical stability: clamp to avoid exact 0 or 1 which can cause inf log_prob
+        sample_actions = torch.clamp(sample_actions, 1e-6, 1.0 - 1e-6)
+        log_prob_per_dim = dist.log_prob(sample_actions)
+        # Log Prob Correction for scaling
+        log_prob_per_dim -= torch.log(torch.tensor(2.0)) 
+        log_prob = log_prob_per_dim.sum(dim=1)
+        
+        entropy = dist.entropy().sum(dim=1)
         
         return log_prob, value, entropy
 

@@ -1,4 +1,4 @@
-from agents.networks import ActorCritic, ActorCriticBeta
+from agents.networks import ActorCriticBeta
 import numpy as np
 import torch
 from torch.optim import Adam
@@ -83,7 +83,7 @@ class PPOAgent:
             'total_loss': total_loss.item(),
         }
 
-    def compute_gae(self, rewards, values, terminated, terminateds, next_value):
+    def compute_gae_old(self, rewards, values, terminated, terminateds, next_value):
         #TD Error = r + gamma * V(s_{t+1}) - V(s_t)
         # A_t = TD Error + gamma * lambda * A(s_{t+1})
         # Recall returns can be computed in two different ways:
@@ -107,9 +107,45 @@ class PPOAgent:
         returns = [adv + val for adv, val in zip(advantages, values)]
         return torch.tensor(returns).to(self.device), torch.tensor(advantages).to(self.device)
 
+    def compute_gae(self, rewards, values, terminateds, truncateds, next_value):
+        #TD Error = r + gamma * V(s_{t+1}) - V(s_t)
+        # A_t = TD Error + gamma * lambda * A(s_{t+1})
+        # Recall returns can be computed in two different ways:
+        # 1. Monte Carlo returns: G_t = gamma^k * r_t + gamma^(k-1) * r_(t+1) + ... + gamma * r_(t+k-1)
+        # 2. GAE returns: G_t = A_t + V(s_t) since A_t = G_t - V(s_t)
+        # returns: Uses returns as targets to train the critic function to predict better state, value predictions.
+        # terminated: bootstrap_mask=0, gae_mask=0
+        # truncated: bootstrap_mask=1, gae_mask=1
+        # (i.e., we DO bootstrap and accumulate for truncated episodes)
+        advantages = [] # Uses this to determine which actions were better than expected, helping the policy improve.
+        gae = 0
+        for t in reversed(range(len(rewards))):
+            if t == len(rewards) - 1:
+                # This is the last step of rollout; Only mask terminated states, not truncated ones
+                next_non_terminal = 1.0 - terminateds[t]
+                next_values = next_value
+            else:
+                # Use the NEXT transition's terminated flag
+                next_non_terminal = 1.0 - terminateds[t + 1]
+                next_values = values[t + 1]
+
+            # TD error with proper masking
+            delta = rewards[t] + self.gamma * next_values * next_non_terminal - values[t]
+            
+            # GAE accumulation
+            # If terminated (episode ended naturally), don't accumulate future advantages
+            # If truncated (episode ended due to time limit),DO accumulate (we bootstrapped above)
+            terminated_mask = terminateds[t]
+            gae = delta + self.gamma * self.gae_lambda * (1 - terminated_mask) * gae
+            advantages.insert(0, gae)
+        
+        returns = [adv + val for adv, val in zip(advantages, values)]
+        return torch.tensor(returns).to(self.device), torch.tensor(advantages).to(self.device)
+
     def process_action(self, raw_action, rolling_speed=None, steering_buffer=None):
         # print(f"Raw action from policy: {raw_action}")
 
+        steer = raw_action[0]
         speed = raw_action[1]
         if speed > 0:
             gas = speed
