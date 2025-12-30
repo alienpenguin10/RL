@@ -1,9 +1,9 @@
 import numpy as np
 import torch
 import gymnasium as gym
-from agents.ppo_simple_agent import PPOAgent
+from agents.ppo import PPOAgent
 from agents.recording_buffer import RecordingBuffer
-from env_wrapper import ProcessedFrame, FrameStack, ActionRemapWrapper
+from CarRacingEnv.env_wrapper import ProcessedFrame, FrameStack
 import signal
 import sys
 import os

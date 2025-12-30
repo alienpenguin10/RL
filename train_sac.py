@@ -8,7 +8,7 @@ import time
 import yaml
 import argparse
 from gymnasium.wrappers import RecordVideo
-from wrappers import PreprocessWrapper, FrameSkipWrapper, FrameStack, ThrottleActionWrapper
+from CarRacingEnv.wrappers import PreprocessWrapper, FrameSkipWrapper, FrameStack, ThrottleActionWrapper
 
 
 def load_config(config_path):

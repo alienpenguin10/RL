@@ -1,7 +1,7 @@
 import gymnasium as gym
 from agents.reinforce import REINFORCEAgent
 from agents.vpg import VPGAgent
-from agents.ppo import PPOAgent
+from agents.ppo_old import PPOAgent
 from agents.sac import SACAgent
 import os
 import signal

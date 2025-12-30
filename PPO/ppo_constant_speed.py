@@ -6,7 +6,7 @@ from torch.optim import Adam
 from torch.optim.lr_scheduler import LinearLR
 import gymnasium as gym
 from agents.networks import ConvNet, ConvNet_StackedFrames
-from env_wrapper import ProcessedFrame, FrameStack, ActionRemapWrapper
+from CarRacingEnv.env_wrapper import ProcessedFrame, FrameStack, ActionRemapWrapper
 import signal
 import sys
 import os
@@ -28,33 +28,11 @@ def layer_init(layer, std=np.sqrt(2), bias_const=0.0):
     torch.nn.init.constant_(layer.bias, bias_const)
     return layer
 
-class Normalize(nn.Module):
-    def __init__(self, scale=255.0):
-        super().__init__()
-        self.scale = scale
-    
-    def forward(self, x):
-        return x.float() / self.scale
-
 class ActorCritic(nn.Module):
     def __init__(self, num_frames, output_shape):
         super().__init__()
         # Using Orthogonal Initialization
-        # self.conv = ConvNet_StackedFrames(num_frames=num_frames)
-        self.conv = nn.Sequential(
-            Normalize(255.0), # Normalize input to [0, 1]
-            nn.Conv2d(num_frames, out_channels=16, kernel_size=7, stride=4, padding=(8,2)),
-            nn.ReLU(),
-            nn.MaxPool2d(kernel_size=2, stride=2),
-            nn.Conv2d(in_channels=16, out_channels=32, kernel_size=5, stride=1, padding=1),
-            nn.ReLU(),
-            nn.Conv2d(in_channels=32, out_channels=64, kernel_size=3, stride=1),
-            nn.ReLU(),
-            nn.Conv2d(in_channels=64, out_channels=128, kernel_size=3, stride=1),
-            nn.ReLU(),
-            nn.Conv2d(in_channels=128, out_channels=256, kernel_size=3, stride=1),
-            nn.ReLU(),
-        )
+        self.conv = ConvNet_StackedFrames(num_frames=num_frames)
         conv_size = 4096  # Output size from ConvNet (256 channels * 4 height * 4 width)
         self.critic = nn.Sequential(
             layer_init(nn.Linear(conv_size, 64)),
@@ -63,21 +41,7 @@ class ActorCritic(nn.Module):
             nn.Tanh(),
             layer_init(nn.Linear(64, 1), std=1.0),
         )
-        self.actor_mean = nn.Sequential(
-            layer_init(nn.Linear(conv_size, 64)),
-            nn.Tanh(),
-            layer_init(nn.Linear(64, 64)),
-            nn.Tanh(),
-            layer_init(nn.Linear(64, output_shape), std=0.01),
-        )
         self.actor_steer = nn.Sequential(
-            layer_init(nn.Linear(conv_size, 64)),
-            nn.Tanh(),
-            layer_init(nn.Linear(64, 64)),
-            nn.Tanh(),
-            layer_init(nn.Linear(64, output_shape), std=0.01),
-        )
-        self.actor_speed = nn.Sequential(
             layer_init(nn.Linear(conv_size, 64)),
             nn.Tanh(),
             layer_init(nn.Linear(64, 64)),
@@ -104,69 +68,36 @@ class ActorCritic(nn.Module):
         # Takes a single state -> samples a new action from policy dist
         conv_features = self.get_obs_features(state)
         steer_mean = self.actor_steer(conv_features)
-        speed_mean = self.actor_speed(conv_features)
         steer_logstd = self.actor_logstd.expand_as(steer_mean)
-        speed_logstd = self.actor_logstd.expand_as(speed_mean)
         steer_std = torch.exp(steer_logstd)
-        speed_std = torch.exp(speed_logstd)
         steer_dist = torch.distributions.Normal(steer_mean, steer_std)
-        speed_dist = torch.distributions.Normal(speed_mean, speed_std)
         steer_action = steer_dist.sample()
-        speed_action = speed_dist.sample()
         steer = steer_action.cpu().numpy().flatten()
-        speed = speed_action.cpu().numpy().flatten()
-        action = np.array([steer[0], speed[0]])
         steer_log_prob = steer_dist.log_prob(steer_action).sum(1).cpu().numpy().flatten()
-        speed_log_prob = speed_dist.log_prob(speed_action).sum(1).cpu().numpy().flatten()
-        log_prob = steer_log_prob + speed_log_prob
-
-        # mean = self.actor_mean(conv_features)
-        # logstd = self.actor_logstd.expand_as(mean)
-        # std = torch.exp(logstd)
-        # dist = torch.distributions.Normal(mean, std)
-        # action = dist.sample()
-        # log_prob = dist.log_prob(action).sum(1).cpu().numpy().flatten()
-        # action = action.cpu().numpy().flatten()
-
         value = self.critic(conv_features).cpu().numpy().flatten()
-        return action, log_prob, value
+        return steer, steer_log_prob, value
     
     def evaluate(self, states, actions):
         # takes in batch of states and actions -> doesn't sample evaluates the log prob of specific action under the current policy
         # also returns entropy regularization term
         conv_features = self.get_obs_features(states)
         steer_mean = self.actor_steer(conv_features)
-        speed_mean = self.actor_speed(conv_features)
         steer_logstd = self.actor_logstd.expand_as(steer_mean)
-        speed_logstd = self.actor_logstd.expand_as(speed_mean)
         steer_std = torch.exp(steer_logstd)
-        speed_std = torch.exp(speed_logstd)
         steer_dist = torch.distributions.Normal(steer_mean, steer_std)
-        speed_dist = torch.distributions.Normal(speed_mean, speed_std)
         steer_actions = actions[:, 0].unsqueeze(1)
-        speed_actions = actions[:, 1].unsqueeze(1)
         steer_log_prob = steer_dist.log_prob(steer_actions).sum(1)
-        speed_log_prob = speed_dist.log_prob(speed_actions).sum(1)
-        log_prob = steer_log_prob + speed_log_prob
-        entropy = steer_dist.entropy().sum(1) + speed_dist.entropy().sum(1)
-        
-        # mean = self.actor_mean(conv_features)
-        # logstd = self.actor_logstd.expand_as(mean)
-        # std = torch.exp(logstd)
-        # dist = torch.distributions.Normal(mean, std)
-        # log_prob = dist.log_prob(actions).sum(1)
-        # entropy = dist.entropy().sum(1)
-
+        entropy = steer_dist.entropy().sum(1)
         value = self.critic(conv_features)
-        return log_prob, value, entropy
+        return steer_log_prob, value, entropy
 
 class PPOAgent:
     def __init__(self, env):
         self.observation_size = env.observation_space.shape[0]
         self.action_size = env.action_space.shape[0]
         # self.policy = ActorCritic(num_frames=NUM_FRAMES, output_shape=self.action_size).to(DEVICE)
-        self.policy = ActorCritic(num_frames=NUM_FRAMES, output_shape=2).to(DEVICE) # Only steer and speed
-        self.optimizer = Adam(self.policy.parameters(), lr=LEARNING_RATE, weight_decay=L2_REG)
+        self.policy = ActorCritic(num_frames=NUM_FRAMES, output_shape=1).to(DEVICE) # Only steer
+        self.optimizer = Adam(self.policy.parameters(), lr=LEARNING_RATE)
         self.lr_scheduler = LinearLR(self.optimizer, start_factor=1.0, end_factor=0.1, total_iters=NUM_UPDATES)
         self.entropy_coef = ENTROPY_COEFF
     
@@ -211,7 +142,7 @@ class PPOAgent:
                 # Total Loss = Policy Loss - ENTROPY_COEFF * Policy Entropy + VALUE_COEFF * Value Loss
                 if ENTROPY_DECAY < 1.0:
                     self.entropy_coef *= ENTROPY_DECAY
-                total_loss = policy_loss - self.entropy_coef * entropy_loss + VALUE_COEFF * value_loss
+                total_loss = policy_loss - self.entropy_coef * entropy_loss  + VALUE_COEFF * value_loss
 
                 self.optimizer.zero_grad()
                 total_loss.backward()
@@ -268,10 +199,8 @@ def compute_gae(rewards, values, terminated, terminateds, next_value):
     returns = [adv + val for adv, val in zip(advantages, values)]
     return torch.tensor(returns).to(DEVICE), torch.tensor(advantages).to(DEVICE)
 
-def process_action(raw_action, rolling_speed=None, steering_buffer=None):
-    # print(f"Raw action from policy: {raw_action}")
-
-    # Scale from Tanh output to [-1, 1] and [0, 1]
+def process_action(raw_action):
+    # Scale from Tanh output to [-1, 1]
     # keep relative probabilities
     steer = raw_action[0]
     if steer < -0.66:
@@ -279,54 +208,12 @@ def process_action(raw_action, rolling_speed=None, steering_buffer=None):
     elif steer > 0.66:
         steer = min((steer - 0.66) / 2.0 + 0.66, 1.0)
 
-    speed = raw_action[1]
-    if speed < -0.66:
-        speed = max((speed + 0.66) / 2.0 - 0.66, -1.0)
-    elif speed > 0.66:
-        speed = min((speed - 0.66) / 2.0 + 0.66, 1.0)
-    # Allow only one input and scale to [0, 1]
-    if speed > 0:
-        gas = speed
-        brake = 0.0
-    else:
-        gas = 0.0
-        brake = -speed
-
-    # gas = raw_action[1]
-    # if gas < -0.66:
-    #     gas = max((gas + 0.66) / 2.0 - 0.66, -1.0)
-    # elif gas > 0.66:
-    #     gas = min((gas - 0.66) / 2.0 + 0.66, 1.0)
-    # gas = (gas + 1) / 2  # Scale to [0, 1]
-
-    # brake = raw_action[2]
-    # if brake < -0.66:
-    #     brake = max((brake + 0.66) / 2.0 - 0.66, -1.0)
-    # elif brake > 0.66:
-    #     brake = min((brake - 0.66) / 2.0 + 0.66, 1.0)
-    # brake = (brake + 1) / 2  # Scale to [0, 1]
-
     # Clip actions to be within action space bounds
     steer = np.clip(steer, -1.0, 1.0)
-    gas = np.clip(gas, 0.0, 1.0)
-    brake = np.clip(brake, 0.0, 1.0)
 
-    if rolling_speed is not None:
-        # Limit braking based on current speed to encourage forward movement
-        if rolling_speed < 3.0:
-            brake = 0.0
-        elif rolling_speed < 6.0:
-            brake = min(brake, 0.2)
+    action = np.array([steer, 0.0, 0.0])  # steer, gas, brake
 
-    if steering_buffer is not None:
-        # Limit steering input
-        avg_steer = np.mean(steering_buffer) if len(steering_buffer) > 0 else 0.0
-        steer = 0.7 * steer + 0.3 * avg_steer
-        steer = np.clip(steer, -0.7, 0.7)
-
-    # print(f"Processed action - Steer: {steer}, Gas: {gas}, Brake: {brake}")
-
-    return np.array([steer, gas, brake])
+    return action
 
 """ Hyperparameters """
 TEST_MODE = False
@@ -334,7 +221,7 @@ MODEL_FILE = "ppo_1_final.pth"  # Replace with your model file for testing
 RENDER_ENV = True
 LOG_WANDB = False
 SAVE_CHECKPOINTS = False
-TOTAL_TIMESTEPS = 40000
+TOTAL_TIMESTEPS = 50000
 
 HORIZON = 4096
 NUM_UPDATES = int(TOTAL_TIMESTEPS / HORIZON) # 100000 / 2048 = 244
@@ -346,17 +233,17 @@ NUM_FRAMES = 6
 SKIP_FRAMES = 4
 CHECKPOINT_INTERVAL = HORIZON
 
+START_GAS_STEPS = 30 # Initial steps to just go forward with gas
 EPISODE_CUTOFF = 300  # Early termination if no progress for n steps
 CUTOFF_PENALTY = -100.0  # Penalty for early cutoff
 TRUNCATED_PENALTY = -20.0  # Penalty for episode truncation due to time limit
-LEARNING_RATE = 3e-4
+LEARNING_RATE = 1e-3
 GAMMA = 0.99
 GAE_LAMBDA = 0.95
 EPSILONS = 0.2 # Clipping ratio for PPO
-VALUE_COEFF = 0.2
-ENTROPY_COEFF = 0.04
-ENTROPY_DECAY = 1.0 # Set to <1.0 to decay entropy coefficient over time
-L2_REG = 1e-2 # Set to 0.0 to disable L2 regularization
+VALUE_COEFF = 0.5
+ENTROPY_COEFF = 0.02
+ENTROPY_DECAY = 1.0
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 def train(env_name='CarRacing-v3', render_env=False, log_wandb=False):
@@ -365,7 +252,7 @@ def train(env_name='CarRacing-v3', render_env=False, log_wandb=False):
     if WANDB_AVAILABLE and log_wandb:
         wandb.init(
             project="rl-training",
-            name=f"ppo_{env_name}",
+            name=f"ppo_{env_name}_constant_speed",
             config={
                 "algorithm": "ppo",
                 "environment": env_name,
@@ -406,14 +293,10 @@ def train(env_name='CarRacing-v3', render_env=False, log_wandb=False):
     
     # Register signal handler for graceful shutdown
     signal.signal(signal.SIGINT, save_on_interrupt)
-
-    rolling_speed = 0.0
-    # steering_buffer = deque([], maxlen=5)
     
     while total_steps < TOTAL_TIMESTEPS:
         states = torch.zeros((HORIZON, *env.observation_space.shape)).to(DEVICE)
-        # actions = torch.zeros((HORIZON, env.action_space.shape[0])).to(DEVICE)
-        actions = torch.zeros((HORIZON, 2)).to(DEVICE)  # Only steer and speed
+        actions = torch.zeros((HORIZON, 1)).to(DEVICE)  # Only steer
         rewards = torch.zeros((HORIZON)).to(DEVICE)
         terminateds = torch.zeros((HORIZON)).to(DEVICE)
         values = torch.zeros((HORIZON)).to(DEVICE)
@@ -428,21 +311,22 @@ def train(env_name='CarRacing-v3', render_env=False, log_wandb=False):
         for step in range(HORIZON):
             states[step] = state
             terminateds[step] = torch.tensor(terminated).to(DEVICE)
-            with torch.no_grad():
-                raw_action, log_prob, value = agent.policy.get_action(state)
-                values[step] = torch.tensor(value).to(DEVICE)       
-            actions[step] = torch.tensor(raw_action).to(DEVICE)
-            log_probs[step] = torch.tensor(log_prob).to(DEVICE)
-            processed_action = process_action(raw_action, rolling_speed=rolling_speed)
-            rolling_speed = 0.9999*rolling_speed + processed_action[1]*0.1 - processed_action[2]
-            # steering_buffer.append(processed_action[0])
+            if episode_steps < START_GAS_STEPS:
+                # Initial steps to just go forward with gas
+                processed_action = np.array([0.0, 1.0, 0.0])  # steer=0.0, gas=1.0, brake=0.0
+            else:
+                with torch.no_grad():
+                    raw_action, log_prob, value = agent.policy.get_action(state)
+                    values[step] = torch.tensor(value).to(DEVICE)       
+                actions[step] = torch.tensor(raw_action).to(DEVICE)
+                log_probs[step] = torch.tensor(log_prob).to(DEVICE)
+                processed_action = process_action(raw_action)
 
             next_state, reward, terminated, truncated, info = env.step(processed_action)
             episode_steps += 1
-
+            total_steps += 1
             episode_reward += reward
 
-            # Crucial: Only treat as 'done' if terminated (failure), not truncated (time limit)
             if (episode_steps >= EPISODE_CUTOFF and rewards.numel() >= EPISODE_CUTOFF and rewards[step-EPISODE_CUTOFF+1:step-1].sum() < -EPISODE_CUTOFF*0.09):
                 # Early termination if no progress for extended period
                 penalty = min(CUTOFF_PENALTY + (episode_steps-EPISODE_CUTOFF) * 0.1, 0.0) # Large negative reward for stagnation reduced if car was performing well before
@@ -452,19 +336,16 @@ def train(env_name='CarRacing-v3', render_env=False, log_wandb=False):
             if truncated:
                 reward += TRUNCATED_PENALTY
                 episode_reward += TRUNCATED_PENALTY
-            if terminated or truncated:
-                print(f"Episode {episode} finished - Steps: {episode_steps}, Reward: {episode_reward}")
-                next_state, _ = env.reset()
-                episode += 1
-                episode_steps = 0
-                episode_rewards.append(episode_reward)
-                episode_reward = 0
-                rolling_speed = 0.0
-                # steering_buffer.clear()
-            
             rewards[step] = torch.tensor(reward).to(DEVICE)
+            if terminated or truncated:
+                print(f"Episode {episode} | Episode steps {episode_steps} | Episode Reward={episode_reward:.2f}")
+                episode += 1
+                episode_rewards.append(episode_reward)
+                next_state, _ = env.reset()
+                episode_steps = 0
+                episode_reward = 0
+
             state = torch.Tensor(next_state).to(DEVICE)
-            total_steps += 1
         
         # Boostrap value if not done
         with torch.no_grad():
@@ -515,7 +396,7 @@ def train(env_name='CarRacing-v3', render_env=False, log_wandb=False):
     env.close()
 
 def test(model_path="./models/ppo_final.pth"):
-    env = gym.make(f'{env_name}', render_mode='human' if render_env else None)
+    env = gym.make(f'{env_name}', render_mode='human' if RENDER_ENV else None)
     env = ProcessedFrame(env)
     env = FrameStack(env, num_frames=NUM_FRAMES, skip_frames=SKIP_FRAMES)
     env = gym.wrappers.RecordEpisodeStatistics(env)
@@ -525,15 +406,22 @@ def test(model_path="./models/ppo_final.pth"):
     state, _ = env.reset()
     state = torch.Tensor(state).to(DEVICE)
     steps = 0
+    episode_steps = 0
 
     while steps < TOTAL_TIMESTEPS:
-        with torch.no_grad():
-            action, _, _ = agent.policy.get_action(state)
-        processed_action = process_action(action)
+        if episode_steps < START_GAS_STEPS:
+                # Initial steps to just go forward with gas
+                processed_action = np.array([0.0, 1.0, 0.0])  # steer=0.0, gas=1.0, brake=0.0
+        else:
+            with torch.no_grad():
+                action, _, _ = agent.policy.get_action(state)
+            processed_action = process_action(action)
         next_state, reward, terminated, truncated, info = env.step(processed_action)
+        episode_steps += 1
         steps += 1
         if terminated or truncated:
             next_state, _ = env.reset()
+            episode_steps = 0
         state = torch.Tensor(next_state).to(DEVICE)
 
 if __name__ == '__main__':
@@ -541,11 +429,9 @@ if __name__ == '__main__':
     os.makedirs("./models", exist_ok=True)
 
     env_name = 'CarRacing-v3'
-    log_wandb = LOG_WANDB
-    render_env = RENDER_ENV
     if TEST_MODE:
         print("Running in TEST MODE")
         test(f"./models/{MODEL_FILE}")
     else:
         print("Running in TRAINING MODE")
-        train(env_name=env_name, render_env=render_env, log_wandb=log_wandb)
+        train(env_name=env_name, render_env=RENDER_ENV, log_wandb=LOG_WANDB)

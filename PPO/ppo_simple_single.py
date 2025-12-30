@@ -8,7 +8,7 @@ import gymnasium as gym
 # Try to import wandb (optional)
 try:
     import wandb
-    WANDB_AVAILABLE = False
+    WANDB_AVAILABLE = True
 except ImportError:
     WANDB_AVAILABLE = False
     print("wandb not available - training will continue without logging")
@@ -40,7 +40,7 @@ class ActorCritic(nn.Module):
             nn.Flatten(),
             layer_init(nn.Linear(64 * 7 * 7, 512)), # 3136 → 512
             nn.ReLU()
-        )
+        )   
         # Using Orthogonal Initialization
         self.critic = layer_init(nn.Linear(512, 1), std=1.0)
         
@@ -95,7 +95,8 @@ class ActorCritic(nn.Module):
         action_log_probs_per_dim[:, 0] -= torch.log(torch.tensor(2.0))
         action_log_prob = action_log_probs_per_dim.sum(dim=1)
         value = self.critic(features)
-        return action.cpu().numpy().flatten(), action_log_prob.cpu().numpy().flatten(), value.cpu().numpy().flatten()
+        # Return tensors (keep on GPU) - squeeze to remove batch dimension
+        return action.squeeze(0), action_log_prob.squeeze(0), value.squeeze(0)
     
     def evaluate(self, states, actions):
         # takes in batch of states and actions -> doesn't sample evaluates the log prob of specific action under the current policy
@@ -194,25 +195,36 @@ class PPOAgent:
             'total_loss': total_loss.item(),
         }
 
-def compute_gae(rewards, values, terminated, terminateds, next_value):
+def compute_gae(rewards, values, terminateds, truncateds, next_value):
     #TD Error = r + gamma * V(s_{t+1}) - V(s_t)
     # A_t = TD Error + gamma * lambda * A(s_{t+1})
     # Recall returns can be computed in two different ways:
     # 1. Monte Carlo returns: G_t = gamma^k * r_t + gamma^(k-1) * r_(t+1) + ... + gamma * r_(t+k-1)
     # 2. GAE returns: G_t = A_t + V(s_t) since A_t = G_t - V(s_t)
     # returns: Uses returns as targets to train the critic function to predict better state, value predictions.
+    # terminated: bootstrap_mask=0, gae_mask=0
+    # truncated: bootstrap_mask=1, gae_mask=1  
+    # (i.e., we DO bootstrap and accumulate for truncated episodes)
     advantages = [] # Uses this to determine which actions were better than expected, helping the policy improve.
     gae = 0
     for t in reversed(range(len(rewards))):
         if t == len(rewards) - 1:
-            next_non_terminal = 1.0 - terminated
+            # This is the last step of rollout; Only mask terminated states, not truncated ones
+            next_non_terminal = 1.0 - terminateds[t]
             next_values = next_value
         else:
+            # Use the NEXT transition's terminated flag
             next_non_terminal = 1.0 - terminateds[t + 1]
             next_values = values[t + 1]
-        
+
+        # TD error with proper masking
         delta = rewards[t] + GAMMA * next_values * next_non_terminal - values[t]
-        gae = delta + GAMMA * GAE_LAMBDA * next_non_terminal * gae
+        
+        # GAE accumulation
+        # If terminated (episode ended naturally), don't accumulate future advantages
+        # If truncated (episode ended due to time limit),DO accumulate (we bootstrapped above)
+        terminated_mask = terminateds[t]
+        gae = delta + GAMMA * GAE_LAMBDA * (1 - terminated_mask) * gae
         advantages.insert(0, gae)
     
     returns = [adv + val for adv, val in zip(advantages, values)]
@@ -253,7 +265,7 @@ def train(env_name='CarRacing-v3'):
             }
         )
     # Import frame stacking wrapper
-    from wrappers import PreprocessWrapper, FrameStack 
+    from CarRacingEnv.wrappers import PreprocessWrapper, FrameStack 
     
     env = gym.make('CarRacing-v3', continuous=True)
     env = PreprocessWrapper(env)
@@ -263,9 +275,9 @@ def train(env_name='CarRacing-v3'):
 
     state, _ = env.reset()
     state = torch.Tensor(state).to(DEVICE)
-    terminated = 0
     total_steps = 0
     update_count = 0
+    avg_reward = 0
     episode_rewards = []
     
     while total_steps < TOTAL_TIMESTEPS:
@@ -273,6 +285,7 @@ def train(env_name='CarRacing-v3'):
         actions = torch.zeros((HORIZON, *env.action_space.shape)).to(DEVICE)
         rewards = torch.zeros((HORIZON)).to(DEVICE)
         terminateds = torch.zeros((HORIZON)).to(DEVICE)
+        truncateds = torch.zeros((HORIZON)).to(DEVICE)
         values = torch.zeros((HORIZON)).to(DEVICE)
         log_probs = torch.zeros((HORIZON)).to(DEVICE)
 
@@ -281,17 +294,18 @@ def train(env_name='CarRacing-v3'):
         # Rollout
         for step in range(HORIZON):
             states[step] = state
-            terminateds[step] = torch.tensor(terminated).to(DEVICE)
             with torch.no_grad():
                 # CNN expects input with a batch dimension: (batch_size, channels, height, width)
                 # without .unsqueeze(0), state.shape = (channels, height, width)
                 # with .unsqueeze(0), state.shape = (1, channels, height, width)
-                raw_action, log_prob, value = agent.policy.get_action(state.unsqueeze(0)) # To make sure state has a batch dimension
-                values[step] = torch.tensor(value).to(DEVICE)       
-            actions[step] = torch.tensor(raw_action).to(DEVICE)
-            log_probs[step] = torch.tensor(log_prob).to(DEVICE)
+                action_tensor, log_prob_tensor, value_tensor = agent.policy.get_action(state.unsqueeze(0))
+                # Keep tensors on GPU - no conversion needed
+                values[step] = value_tensor
+                actions[step] = action_tensor
+                log_probs[step] = log_prob_tensor
 
-
+            # Only convert to NumPy for environment interaction
+            raw_action = action_tensor.cpu().numpy()
             next_state, reward, terminated, truncated, info = env.step(raw_action)
             if "episode" in info:
                 print(f"Global Step: {total_steps}, Episode Return: {info['episode']['r']}, Length: {info['episode']['l']}")
@@ -299,7 +313,9 @@ def train(env_name='CarRacing-v3'):
             rollout_rewards.append(reward)
 
             # Crucial: Only treat as 'done' if terminated (failure), not truncated (time limit)
-            rewards[step] = torch.tensor(reward).to(DEVICE)
+            terminateds[step] = terminated
+            truncateds[step] = truncated
+            rewards[step] = reward
             if terminated or truncated:
                 next_state, _ = env.reset()
             state = torch.Tensor(next_state).to(DEVICE)
@@ -309,7 +325,7 @@ def train(env_name='CarRacing-v3'):
         with torch.no_grad():
             next_value = agent.policy.get_value(state.unsqueeze(0)).reshape(-1)
 
-        returns, advantages = compute_gae(rewards, values, terminated, terminateds, next_value)
+        returns, advantages = compute_gae(rewards, values, terminateds, truncateds, next_value)
         
         rollouts = {
             'states': states,
