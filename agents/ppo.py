@@ -6,15 +6,15 @@ from torch.optim.lr_scheduler import LinearLR
 
 class PPOAgent:
     def __init__(self, device,
-                 env, epochs, batch_size,
+                 env, policy_outputs, epochs, batch_size,
                  gamma, gae_lambda, value_coeff, epsilons,
                  lr, lr_updates, entropy_coeff, entropy_decay,
                  l2_reg):
         
         self.device = device
         self.observation_dims = env.observation_space.shape
-        self.action_dims = env.action_space.shape[0]
-        self.policy = ActorCriticThreeOutput(obs_shape=self.observation_dims, action_dim=3).to(device) # Only steer and speed
+        self.action_dims = policy_outputs
+        self.policy = ActorCritic(obs_shape=self.observation_dims, action_dim=2).to(device) if policy_outputs == 2 else ActorCriticThreeOutput(obs_shape=self.observation_dims, action_dim=3).to(device)
         self.optimizer = Adam(self.policy.parameters(), lr=lr, weight_decay=l2_reg)
         self.lr_scheduler = LinearLR(self.optimizer, start_factor=1.0, end_factor=0.1, total_iters=lr_updates)
         self.epochs = epochs
@@ -145,18 +145,19 @@ class PPOAgent:
     def process_action(self, raw_action, rolling_speed=None, steering_buffer=None):
         # print(f"Raw action from policy: {raw_action}")
 
-        # steer = raw_action[0]
-        # speed = raw_action[1]
-        # if speed > 0:
-        #     gas = speed
-        #     brake = 0.0
-        # else:
-        #     gas = 0.0
-        #     brake = -speed
-
-        steer = raw_action[0]
-        gas = raw_action[1]
-        brake = raw_action[2]
+        if (self.action_dims == 2):
+            steer = raw_action[0]
+            speed = raw_action[1]
+            if speed > 0:
+                gas = speed
+                brake = 0.0
+            else:
+                gas = 0.0
+                brake = -speed
+        else:
+            steer = raw_action[0]
+            gas = raw_action[1]
+            brake = raw_action[2]
 
         # Clip actions to be within action space bounds
         steer = np.clip(steer, -1.0, 1.0)

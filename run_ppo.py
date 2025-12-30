@@ -27,6 +27,7 @@ LOG_WANDB = True
 SAVE_CHECKPOINTS = False
 TOTAL_TIMESTEPS = 800000
 
+POLICY_OUTPUTS = 2  # Number of outputs from policy network - 2: steer and speed; 3: steer, gas, brake
 HORIZON = 2048
 NUM_UPDATES = int(TOTAL_TIMESTEPS / HORIZON) # 100000 / 2048 = 244
 NUM_EPOCHS = 4
@@ -71,7 +72,7 @@ def train(env_name='CarRacing-v3', render_env=False, log_wandb=False):
     env = ProcessedFrame(env)
     env = FrameStack(env, num_frames=NUM_FRAMES, skip_frames=SKIP_FRAMES)
     env = gym.wrappers.RecordEpisodeStatistics(env)
-    agent = PPOAgent(DEVICE, env, NUM_EPOCHS, BATCH_SIZE,
+    agent = PPOAgent(DEVICE, env, POLICY_OUTPUTS, NUM_EPOCHS, BATCH_SIZE,
                      GAMMA, GAE_LAMBDA, VALUE_COEFF, EPSILONS,
                      LEARNING_RATE, NUM_UPDATES, ENTROPY_COEFF, ENTROPY_DECAY,
                      L2_REG)
@@ -113,8 +114,7 @@ def train(env_name='CarRacing-v3', render_env=False, log_wandb=False):
     
     while total_steps < TOTAL_TIMESTEPS:
         states = torch.zeros((HORIZON, *env.observation_space.shape)).to(DEVICE)
-        actions = torch.zeros((HORIZON, env.action_space.shape[0])).to(DEVICE)
-        # actions = torch.zeros((HORIZON, 2)).to(DEVICE)  # Only steer and speed
+        actions = torch.zeros((HORIZON, POLICY_OUTPUTS)).to(DEVICE)
         rewards = torch.zeros((HORIZON)).to(DEVICE)
         terminateds = torch.zeros((HORIZON)).to(DEVICE)
         truncateds = torch.zeros((HORIZON)).to(DEVICE)
@@ -228,7 +228,7 @@ def test(model_path="./models/ppo_final.pth"):
     env = ProcessedFrame(env)
     env = FrameStack(env, num_frames=NUM_FRAMES, skip_frames=SKIP_FRAMES)
     env = gym.wrappers.RecordEpisodeStatistics(env)
-    agent = PPOAgent(DEVICE, env, NUM_EPOCHS, BATCH_SIZE,
+    agent = PPOAgent(DEVICE, env, POLICY_OUTPUTS, NUM_EPOCHS, BATCH_SIZE,
                      GAMMA, GAE_LAMBDA, VALUE_COEFF, EPSILONS,
                      LEARNING_RATE, NUM_UPDATES, ENTROPY_COEFF, ENTROPY_DECAY,
                      L2_REG)
