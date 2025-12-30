@@ -51,7 +51,6 @@ L2_REG = 1e-2 # Set to 0.0 to disable L2 regularization
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 def train(env_name='CarRacing-v3', render_env=False, log_wandb=False):
-
     # Initialize WandB if available
     if WANDB_AVAILABLE and log_wandb:
         wandb.init(
