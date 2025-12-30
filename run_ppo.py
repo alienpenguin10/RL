@@ -156,7 +156,6 @@ def train(env_name='CarRacing-v3', render_env=False, log_wandb=False):
                 print(f"Episode {episode} finished - Steps: {episode_steps}, Reward: {episode_reward}")
                 if episode_reward > -200.0:
                     episode_slice = slice(step-episode_steps+1, step+1)
-                    print(f"States shape: {states[episode_slice].cpu().numpy().shape}")
                     episode_recording.push_batch(states[episode_slice].cpu().numpy(), 
                                                 actions[episode_slice].cpu().numpy())
                     save_episode_recording(episode, episode_reward, episode_recording)
@@ -229,7 +228,10 @@ def test(model_path="./models/ppo_final.pth"):
     env = ProcessedFrame(env)
     env = FrameStack(env, num_frames=NUM_FRAMES, skip_frames=SKIP_FRAMES)
     env = gym.wrappers.RecordEpisodeStatistics(env)
-    agent = PPOAgent(env)
+    agent = PPOAgent(DEVICE, env, NUM_EPOCHS, BATCH_SIZE,
+                     GAMMA, GAE_LAMBDA, VALUE_COEFF, EPSILONS,
+                     LEARNING_RATE, NUM_UPDATES, ENTROPY_COEFF, ENTROPY_DECAY,
+                     L2_REG)
     agent.load_model(model_path)
 
     state, _ = env.reset()
