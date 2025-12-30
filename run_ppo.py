@@ -113,8 +113,8 @@ def train(env_name='CarRacing-v3', render_env=False, log_wandb=False):
     
     while total_steps < TOTAL_TIMESTEPS:
         states = torch.zeros((HORIZON, *env.observation_space.shape)).to(DEVICE)
-        # actions = torch.zeros((HORIZON, env.action_space.shape[0])).to(DEVICE)
-        actions = torch.zeros((HORIZON, 2)).to(DEVICE)  # Only steer and speed
+        actions = torch.zeros((HORIZON, env.action_space.shape[0])).to(DEVICE)
+        # actions = torch.zeros((HORIZON, 2)).to(DEVICE)  # Only steer and speed
         rewards = torch.zeros((HORIZON)).to(DEVICE)
         terminateds = torch.zeros((HORIZON)).to(DEVICE)
         truncateds = torch.zeros((HORIZON)).to(DEVICE)
