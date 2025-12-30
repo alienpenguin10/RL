@@ -1,4 +1,4 @@
-from agents.networks import ActorCritic
+from agents.networks import ActorCritic, ActorCriticThreeOutput
 import numpy as np
 import torch
 from torch.optim import Adam
@@ -14,7 +14,7 @@ class PPOAgent:
         self.device = device
         self.observation_dims = env.observation_space.shape
         self.action_dims = env.action_space.shape[0]
-        self.policy = ActorCritic(obs_shape=self.observation_dims, action_dim=2).to(device) # Only steer and speed
+        self.policy = ActorCriticThreeOutput(obs_shape=self.observation_dims, action_dim=3).to(device) # Only steer and speed
         self.optimizer = Adam(self.policy.parameters(), lr=lr, weight_decay=l2_reg)
         self.lr_scheduler = LinearLR(self.optimizer, start_factor=1.0, end_factor=0.1, total_iters=lr_updates)
         self.epochs = epochs

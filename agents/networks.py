@@ -52,7 +52,6 @@ class ConvNet(nn.Module):
         return F.relu(self.fc(x))
     
 class PolicyNetwork(nn.Module):
-
     def __init__(self, obs_shape, action_dim, feature_dim=512, hidden_dims=[256, 256], log_std_min=-20, log_std_max=2):
         super().__init__()
         
@@ -89,7 +88,6 @@ class PolicyNetwork(nn.Module):
         
         return action, log_prob, entropy
 
-
     def step_new(self, state):
         """SAC action sampling with tanh squashing and log-prob correction"""
         # Forward pass
@@ -125,7 +123,6 @@ class PolicyNetwork(nn.Module):
         
         return action, log_prob
 
-        
     def act(self, state):
         with torch.no_grad():
             # We can use step but ignore log_prob
@@ -175,6 +172,98 @@ class ValueNetwork(nn.Module):
         x = torch.relu(self.fc2(x))
         return self.fc3(x).squeeze(-1)  # Flatten to (batch,)
 
+class ActorCriticThreeOutput(nn.Module):
+    def __init__(self, obs_shape=(4, 96, 96), action_dim=3, feature_dim=512, hidden_dims=[256, 256]):
+        super().__init__()
+        self.state_dims = obs_shape
+        self.action_dim = action_dim
+        
+        self.cnn = ConvNet(obs_shape, feature_dim)
+        # actor outputs alpha and beta parameters for Beta distribution for each action dimension
+        self.actor = layer_init(nn.Linear(feature_dim, action_dim*2), std=0.01)
+        self.critic = layer_init(nn.Linear(feature_dim, 1), std=1.0)
+    
+    def forward(self, x):
+        assert isinstance(x, torch.Tensor), "Input must be a tensor"
+        if len(x.shape) == 3:
+            x = x.unsqueeze(0) # To make sure state has a batch dimension
+        
+        x = self.cnn(x)
+
+        # Get Alpha and Beta parameters
+        # We use Softplus + 1.0 to ensure alpha, beta >= 1.0.
+        # This constrains the Beta distribution to be unimodal (bell-shaped),
+        # preventing the "U-shaped" bimodality that destabilizes training.
+        policy_output = self.actor(x)
+        alpha_beta = F.softplus(policy_output) + 1.0
+        alpha, beta = torch.chunk(alpha_beta, 2, dim=-1)
+
+        value = self.critic(x)
+
+        # return steer_alpha, steer_beta, speed_alpha, speed_beta, value
+        return alpha, beta, value
+    
+    def get_action(self, state):
+        # Takes a single state -> samples a new action from policy dist
+        alpha, beta, value = self.forward(state)
+        dist = torch.distributions.Beta(alpha, beta)
+        sample = dist.sample()
+
+        # Affine Transformation
+        # Map raw sample to environment bounds
+        # Steering (idx 0): -> [-1, 1] via y = x*2-1
+        # Gas (idx 1): -> [0, 1] via y = x
+        # Brake (idx 2): -> [0, 1] via y = x
+        action = torch.stack([
+            sample[:, 0] * 2 - 1, # Steering
+            sample[:, 1], # Gas
+            sample[:, 2] # Brake
+        ], dim=1)
+
+        # Log Prob Correction
+        # When transforming a variable, we must correct the density.
+        # For steering y = 2x - 1, dy/dx = 2.
+        # log_prob(y) = log_prob(x) - log(|dy/dx|) = log_prob(x) - log(2)
+        # This correction applies only to the steering dimension.
+        log_prob_per_dim = dist.log_prob(sample)
+        log_prob_per_dim[:, 0] -= torch.log(torch.tensor(2.0))
+        log_prob = log_prob_per_dim.sum(dim=1)
+
+        return action.squeeze(0), log_prob.squeeze(0), value.squeeze(0)
+    
+    def get_value(self, state):
+        # Takes a single state -> returns value estimate
+        _, _, value = self.forward(state)
+        return value.squeeze(0)
+    
+    def evaluate(self, states, actions):
+        # takes in batch of states and actions -> doesn't sample evaluates the log prob of specific action under the current policy
+        # also returns entropy regularization term
+        alpha, beta, value = self.forward(states)
+        dist = torch.distributions.Beta(alpha, beta)
+        
+        # Inverse Transformation
+        # The 'actions' passed here are from the reply buffer (Env space)
+        # We must map them back to evaluate them under the Beta distribution
+        # Inverse steering: [-1, 1] -> [0, 1]:  y = x*2-1 -> x = (y + 1) / 2
+        # Inverse gas: [0, 1] -> [0, 1]: y = x
+        # Inverse brake: [0, 1] -> [0, 1]: y = x
+        sample_actions = torch.stack([
+            (actions[:, 0] + 1) / 2, # Steering
+            actions[:, 1], # Gas
+            actions[:, 2] # Brake
+        ], dim=1)
+        # Numerical stability: clamp to avoid exact 0 or 1 which can cause inf log_prob
+        sample_actions = torch.clamp(sample_actions, 1e-6, 1.0 - 1e-6)
+        log_prob_per_dim = dist.log_prob(sample_actions)
+        # Apply log prob correction for scaling the steering dimension
+        log_prob_per_dim[:, 0] -= torch.log(torch.tensor(2.0)) 
+        log_prob = log_prob_per_dim.sum(dim=1)
+        
+        entropy = dist.entropy().sum(dim=1)
+        
+        return log_prob, value, entropy
+
 class ActorCritic(nn.Module):
     def __init__(self, obs_shape=(4, 96, 96), action_dim=2, feature_dim=512, hidden_dims=[256, 256]):
         super().__init__()
@@ -192,7 +281,7 @@ class ActorCritic(nn.Module):
             x = x.unsqueeze(0) # To make sure state has a batch dimension
         
         x = self.cnn(x)
-        
+
         # Get Alpha and Beta parameters
         # We use Softplus + 1.0 to ensure alpha, beta >= 1.0.
         # This constrains the Beta distribution to be unimodal (bell-shaped),
