@@ -218,7 +218,7 @@ class ActorCriticThreeOutput(nn.Module):
             sample[:, 0] * 2 - 1, # Steering
             sample[:, 1], # Gas
             sample[:, 2] # Brake
-        ], dim=1)
+        ], dim=1).cpu().numpy().flatten()
 
         # Log Prob Correction
         # When transforming a variable, we must correct the density.
@@ -227,14 +227,14 @@ class ActorCriticThreeOutput(nn.Module):
         # This correction applies only to the steering dimension.
         log_prob_per_dim = dist.log_prob(sample)
         log_prob_per_dim[:, 0] -= torch.log(torch.tensor(2.0))
-        log_prob = log_prob_per_dim.sum(dim=1)
+        log_prob = log_prob_per_dim.sum(dim=1).cpu().numpy().flatten()
 
-        return action.squeeze(0), log_prob.squeeze(0), value.squeeze(0)
+        return action, log_prob, value
     
     def get_value(self, state):
         # Takes a single state -> returns value estimate
         _, _, value = self.forward(state)
-        return value.squeeze(0)
+        return value
     
     def evaluate(self, states, actions):
         # takes in batch of states and actions -> doesn't sample evaluates the log prob of specific action under the current policy

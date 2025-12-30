@@ -25,7 +25,7 @@ MODEL_FILE = "ppo_1_final.pth"  # Replace with your model file for testing
 RENDER_ENV = True
 LOG_WANDB = True
 SAVE_CHECKPOINTS = False
-TOTAL_TIMESTEPS = 200000
+TOTAL_TIMESTEPS = 800000
 
 HORIZON = 2048
 NUM_UPDATES = int(TOTAL_TIMESTEPS / HORIZON) # 100000 / 2048 = 244
@@ -33,17 +33,17 @@ NUM_EPOCHS = 4
 NUM_MINIBATCHES = 8
 BATCH_SIZE = HORIZON // NUM_MINIBATCHES # 2048 // 8 = 256
 FRAME_STACKING = True
-NUM_FRAMES = 6
-SKIP_FRAMES = 4
+NUM_FRAMES = 4
+SKIP_FRAMES = 0
 CHECKPOINT_INTERVAL = HORIZON
 
-EPISODE_CUTOFF = 300  # Early termination if no progress for n steps
+EPISODE_CUTOFF = 1001  # Early termination if no progress for n steps
 CUTOFF_PENALTY = -100.0  # Penalty for early cutoff
 TRUNCATED_PENALTY = -20.0  # Penalty for episode truncation due to time limit
 LEARNING_RATE = 3e-4
 GAMMA = 0.99
 GAE_LAMBDA = 0.95
-EPSILONS = 0.1 # Clipping ratio for PPO
+EPSILONS = 0.2 # Clipping ratio for PPO
 VALUE_COEFF = 0.01
 ENTROPY_COEFF = 0.02
 ENTROPY_DECAY = 1.0 # Set to <1.0 to decay entropy coefficient over time

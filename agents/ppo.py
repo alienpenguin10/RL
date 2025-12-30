@@ -145,28 +145,18 @@ class PPOAgent:
     def process_action(self, raw_action, rolling_speed=None, steering_buffer=None):
         # print(f"Raw action from policy: {raw_action}")
 
+        # steer = raw_action[0]
+        # speed = raw_action[1]
+        # if speed > 0:
+        #     gas = speed
+        #     brake = 0.0
+        # else:
+        #     gas = 0.0
+        #     brake = -speed
+
         steer = raw_action[0]
-        speed = raw_action[1]
-        if speed > 0:
-            gas = speed
-            brake = 0.0
-        else:
-            gas = 0.0
-            brake = -speed
-
-        # gas = raw_action[1]
-        # if gas < -0.66:
-        #     gas = max((gas + 0.66) / 2.0 - 0.66, -1.0)
-        # elif gas > 0.66:
-        #     gas = min((gas - 0.66) / 2.0 + 0.66, 1.0)
-        # gas = (gas + 1) / 2  # Scale to [0, 1]
-
-        # brake = raw_action[2]
-        # if brake < -0.66:
-        #     brake = max((brake + 0.66) / 2.0 - 0.66, -1.0)
-        # elif brake > 0.66:
-        #     brake = min((brake - 0.66) / 2.0 + 0.66, 1.0)
-        # brake = (brake + 1) / 2  # Scale to [0, 1]
+        gas = raw_action[1]
+        brake = raw_action[2]
 
         # Clip actions to be within action space bounds
         steer = np.clip(steer, -1.0, 1.0)
