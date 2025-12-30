@@ -85,6 +85,7 @@ def train(env_name='CarRacing-v3', render_env=False, log_wandb=False):
     episode = 0 # Track current episode for saving on interrupt
     checkpoint = 0
     episode_steps = 0
+    episode_lengths = []
     episode_reward = 0
     episode_rewards = []
     carryover_reward = 0
@@ -164,6 +165,7 @@ def train(env_name='CarRacing-v3', render_env=False, log_wandb=False):
                 
                 next_state, _ = env.reset()
                 episode += 1
+                episode_lengths.append(episode_steps)
                 episode_steps = 0
                 episode_rewards.append(episode_reward)
                 episode_reward = 0
@@ -194,8 +196,10 @@ def train(env_name='CarRacing-v3', render_env=False, log_wandb=False):
 
         update_metrics = agent.update(rollouts)
         update_count += 1
+        avg_length = np.mean(episode_lengths) if episode_lengths else 0.0
         avg_reward = np.mean(episode_rewards) if episode_rewards else 0.0
-        episode_rewards = []  # Clear after logging
+        episode_lengths = [] # Clear after logging
+        episode_rewards = []
 
         print(f"Update {update_count} completed. Total Steps: {total_steps}. Average Episode Reward: {avg_reward:.2f}")
 
@@ -205,11 +209,11 @@ def train(env_name='CarRacing-v3', render_env=False, log_wandb=False):
             "entropy_loss": update_metrics['entropy_loss'],
             "total_loss": update_metrics['total_loss'],
             "average_episode_reward": avg_reward,
+            "average_episode_length": avg_length,
         }
 
         if WANDB_AVAILABLE and log_wandb:
             wandb.log(log_dict)
-
         
         if SAVE_CHECKPOINTS and (total_steps >= checkpoint):
             agent.save_model(f"./models/ppo_{episode}_checkpoint.pth")
