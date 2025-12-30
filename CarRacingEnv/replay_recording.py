@@ -2,9 +2,12 @@ import pygame
 import numpy as np
 import cv2 as cv
 
-recording_path = "./models/replay/ppo_replay_ep0_reward-110.npz"
+episode = 2
+reward = -118
+recording_path = f"./models/replay/ppo_replay_ep{episode}_reward{reward}.npz"
 recording = np.load(recording_path)
 states = recording['states']
+print("Loaded recording with", len(states), "states.")
 
 pygame.init()
 screen_size = (800, 700)
