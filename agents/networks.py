@@ -253,7 +253,8 @@ class ActorCriticBeta(nn.Module):
     
     def get_value(self, state):
         # Takes a single state -> returns value estimate
-        _, _, _, _, value = self.forward(state)
+        # _, _, _, _, value = self.forward(state)
+        _, _, value = self.forward(state)
         return value
     
     def evaluate(self, states, actions):
