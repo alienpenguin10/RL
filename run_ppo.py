@@ -33,13 +33,12 @@ NUM_UPDATES = int(TOTAL_TIMESTEPS / HORIZON)
 NUM_EPOCHS = 4
 NUM_MINIBATCHES = 8
 BATCH_SIZE = HORIZON // NUM_MINIBATCHES
-FRAME_STACKING = True
-NUM_FRAMES = 4
-SKIP_FRAMES = 0
+NUM_FRAMES = 6
+SKIP_FRAMES = 4
 CHECKPOINT_INTERVAL = 50000
 RECORDING_THRESHOLD = 800.0  # Minimum reward to save episode recording
 
-EPISODE_CUTOFF = 1001 # Early termination if no progress for n steps
+EPISODE_CUTOFF = 1001 # Early termination if no progress for n steps, set to >1000 to disable
 CUTOFF_PENALTY = -100.0 # Penalty for early cutoff
 TRUNCATED_PENALTY = -20.0 # Penalty for episode truncation due to time limit
 LEARNING_RATE = 3e-4
