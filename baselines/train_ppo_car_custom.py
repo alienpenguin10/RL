@@ -1,7 +1,5 @@
-
 print("Script starting...")
 import gymnasium as gym
-import numpy as np
 import torch
 import torch.nn as nn
 from ray.rllib.algorithms.ppo import PPOConfig
@@ -24,28 +22,30 @@ load_dotenv()
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 from agents.networks import ConvNet_StackedFrames
-from env_wrapper import ProcessedFrame, FrameStack, ActionRemapWrapper
+from rlib_env_wrapper import ProcessedFrame, FrameStack, ActionRemapWrapper, ActionRepeatWrapper, \
+    PolicyActionMapWrapper, SpeedInfoWrapper
+
 
 class CustomPPORLModule(PPOTorchRLModule):
     def setup(self):
         # Define the architecture
-        self.convnet = ConvNet_StackedFrames(num_frames=4)
-        
+        self.convnet = ConvNet_StackedFrames(num_frames=6)
+
         # ConvNet output: 256 channels * 4 * 4 spatial = 4096
         self.fc1 = nn.Linear(256 * 4 * 4, 512)
         self.fc2 = nn.Linear(512, 64)
-        
-        # Policy Heads: ALL use Tanh now 
+
+        # Policy Heads: ALL use Tanh now
         # Steering
-        self.steering_mean = nn.Linear(64, 1)   # Outputting [-1, 1]
-        self.steering_log_std = nn.Linear(64, 1)  
+        self.steering_mean = nn.Linear(64, 1)  # Outputting [-1, 1]
+        self.steering_log_std = nn.Linear(64, 1)
 
         # Gas
-        self.gas_mean = nn.Linear(64, 1)   # Outputting [-1, 1]
-        self.gas_log_std = nn.Linear(64, 1) 
+        self.gas_mean = nn.Linear(64, 1)  # Outputting [-1, 1]
+        self.gas_log_std = nn.Linear(64, 1)
 
         # Brake
-        self.brake_mean = nn.Linear(64, 1) # Outputting [-1, 1]
+        self.brake_mean = nn.Linear(64, 1)  # Outputting [-1, 1]
         self.brake_log_std = nn.Linear(64, 1)
 
         # Value Head
@@ -63,11 +63,11 @@ class CustomPPORLModule(PPOTorchRLModule):
         # Preprocess observation
         # Input obs is (B, num_frames, H, W) from FrameStack
         # ConvNet_StackedFrames handles normalization internally
-        
+
         # CNN
         x = self.convnet(obs)
-        x = x.reshape(x.size(0), -1) # Flatten
-        
+        x = x.reshape(x.size(0), -1)  # Flatten
+
         # FC Layers
         x = torch.relu(self.fc1(x))
         x = torch.relu(self.fc2(x))
@@ -75,26 +75,26 @@ class CustomPPORLModule(PPOTorchRLModule):
 
     def _forward(self, batch, **kwargs):
         x = self._get_features(batch)
-        
+
         # Value function
         vf_out = self.vf_head(x).squeeze(-1)
-        
+
         # ALL heads use Tanh
         steering_mean = torch.tanh(self.steering_mean(x))
         gas_mean = torch.tanh(self.gas_mean(x))
         brake_mean = torch.tanh(self.brake_mean(x))
-        
+
         # Policy Log Stds
         steering_log_std = torch.clamp(self.steering_log_std(x), self.LOG_STD_MIN, self.LOG_STD_MAX)
         gas_log_std = torch.clamp(self.gas_log_std(x), self.LOG_STD_MIN, self.LOG_STD_MAX)
         brake_log_std = torch.clamp(self.brake_log_std(x), self.LOG_STD_MIN, self.LOG_STD_MAX)
-        
+
         # Concatenate for action distribution
         means = torch.cat([steering_mean, gas_mean, brake_mean], dim=1)
         log_stds = torch.cat([steering_log_std, gas_log_std, brake_log_std], dim=1)
-        
+
         action_dist_inputs = torch.cat([means, log_stds], dim=1)
-        
+
         return {
             Columns.ACTION_DIST_INPUTS: action_dist_inputs,
             Columns.VF_PREDS: vf_out,
@@ -113,14 +113,52 @@ class CustomPPORLModule(PPOTorchRLModule):
     def _forward_exploration(self, batch, **kwargs):
         return self._forward(batch, **kwargs)
 
+
 # --- Environment Setup ---
+SKIP_FRAMES = 4
+DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+TEST_MODE = False
+MODEL_FILE = "ppo_1_final.pth"  # Replace with your model file for testing
+RENDER_ENV = True
+LOG_WANDB = True
+SAVE_CHECKPOINTS = True
+TOTAL_TIMESTEPS = 800000
+
+POLICY_OUTPUTS = 2  # Number of outputs from policy network - 2: steer and speed; 3: steer, gas, brake
+HORIZON = 4096
+NUM_UPDATES = int(TOTAL_TIMESTEPS / HORIZON)
+NUM_EPOCHS = 4
+NUM_MINIBATCHES = 8
+BATCH_SIZE = HORIZON // NUM_MINIBATCHES
+NUM_FRAMES = 6
+SKIP_FRAMES = 4
+CHECKPOINT_INTERVAL = 50000
+RECORDING_THRESHOLD = 800.0  # Minimum reward to save episode recording
+
+EPISODE_CUTOFF = 1001  # Early termination if no progress for n steps, set to >1000 to disable
+CUTOFF_PENALTY = -100.0  # Penalty for early cutoff
+TRUNCATED_PENALTY = -20.0  # Penalty for episode truncation due to time limit
+LEARNING_RATE = 3e-4
+GAMMA = 0.99
+GAE_LAMBDA = 0.95
+EPSILONS = 0.2  # Clipping ratio for PPO
+VALUE_COEFF = 0.01
+ENTROPY_COEFF = 0.02
+ENTROPY_DECAY = 1.0  # Set to <1.0 to decay entropy coefficient over time
+L2_REG = 1e-2  # Set to 0.0 to disable L2 regularization
+PROCESS_ACTION_DECAY = 0.99  # Decay factor for action processing (speed and steering smoothing) Set to 1.0 for no decay and 0.0 no smoothing
+
 
 def make_car_racing_env(config):
-    env = gym.make("CarRacing-v3", continuous=True) 
+    env = gym.make("CarRacing-v3", continuous=True)
     env = ProcessedFrame(env)
+    env = FrameStack(env, num_frames=NUM_FRAMES, skip_frames=SKIP_FRAMES)
+    env = SpeedInfoWrapper(env)
     env = ActionRemapWrapper(env)
-    env = FrameStack(env, num_frames=4, skip_frames=2) # 2 frames stacked, skip 2
+    env = PolicyActionMapWrapper(env, policy_output_dim=POLICY_OUTPUTS)
+    env = ActionRepeatWrapper(env, skip_frames=SKIP_FRAMES)
     return env
+
 
 register_env("CarRacing-Custom", make_car_racing_env)
 
@@ -134,9 +172,9 @@ config = (
     )
     .environment("CarRacing-Custom")
     .env_runners(
-        num_env_runners=8, # n_envs: 8
+        num_env_runners=8,  # n_envs: 8
         num_envs_per_env_runner=1,
-        rollout_fragment_length=512, # n_steps: 512
+        rollout_fragment_length=512,  # n_steps: 512
     )
     .rl_module(
         rl_module_spec=RLModuleSpec(
@@ -144,27 +182,28 @@ config = (
         ),
     )
     .training(
-        gamma=0.99, # gamma
-        lr=3e-4, # learning_rate
-        kl_coeff=0.2, 
-        clip_param=0.2, # clip_range
-        train_batch_size_per_learner=4096, # batch_size (total) = 8 * 512
-        minibatch_size=128, # batch_size (sgd)
-        num_sgd_iter=10, # n_epochs
-        grad_clip=0.5, # max_grad_norm
-        vf_loss_coeff=0.5, # vf_coef
-        entropy_coeff=0.01, # ent_coef
-        lambda_=0.95, # gae_lambda
+        gamma=0.99,  # gamma
+        lr=3e-4,  # learning_rate
+        kl_coeff=0.2,
+        clip_param=0.2,  # clip_range
+        train_batch_size_per_learner=4096,  # batch_size (total) = 8 * 512
+        minibatch_size=128,  # batch_size (sgd)
+        num_sgd_iter=10,  # n_epochs
+        grad_clip=0.5,  # max_grad_norm
+        vf_loss_coeff=0.5,  # vf_coef
+        entropy_coeff=0.01,  # ent_coef
+        lambda_=0.95,  # gae_lambda
     )
-    .resources(num_gpus=1) 
+    .resources(num_gpus=1)
 )
 
 if __name__ == "__main__":
     # Check for WandB API key
     wandb_api_key = os.getenv("WANDB_API_KEY")
     if not wandb_api_key:
-        raise ValueError("WANDB_API_KEY is not set in the environment variables. Please create a .env file with your WandB API key.")
-    
+        raise ValueError(
+            "WANDB_API_KEY is not set in the environment variables. Please create a .env file with your WandB API key.")
+
     wandb.login(key=wandb_api_key)
     wandb.init(
         project="rl-training",
@@ -178,11 +217,11 @@ if __name__ == "__main__":
     # We append to existing PYTHONPATH if it exists, or set it.
     current_pythonpath = os.getenv("PYTHONPATH", "")
     new_pythonpath = f"{project_root}:{current_pythonpath}" if current_pythonpath else project_root
-    
+
     ray.init(runtime_env={"env_vars": {"PYTHONPATH": new_pythonpath}})
 
     algo = config.build()
-    
+
     # Create checkpoint directory
     checkpoint_dir_base = os.path.join(os.getcwd(), "models", "train_ppo_car_custom")
     os.makedirs(checkpoint_dir_base, exist_ok=True)
@@ -190,28 +229,28 @@ if __name__ == "__main__":
     print("Starting training with Custom CNN RLModule...")
     for i in range(100):
         result = algo.train()
-        
+
         # --- 1. Extract Environment Metrics ---
         env_runners_results = result.get('env_runners', {})
         episode_reward = env_runners_results.get('episode_return_mean', 'N/A')
         episode_len = env_runners_results.get('episode_len_mean', 'N/A')
 
-        print(f"Iteration {i+1}: episode_reward_mean = {episode_reward}")
-        
+        print(f"Iteration {i + 1}: episode_reward_mean = {episode_reward}")
+
         # --- 2. Extract Learner/Loss Metrics ---
         # Located in result['learners']['default_policy']
         learners_results = result.get('learners', {})
         default_policy_results = learners_results.get('default_policy', {})
-        
+
         log_dict = {
             "iteration": i + 1,
             # Env Metrics
             "episode_reward_mean": episode_reward,
             "episode_len_mean": episode_len,
-            
+
             # Time Metrics (Located at root)
             "training_iteration_time_ms": result.get('time_this_iter_s', 0) * 1000,
-            
+
             # Learner Metrics (Losses, Entropy, etc.)
             "entropy": default_policy_results.get('entropy'),
             "total_loss": default_policy_results.get('total_loss'),
