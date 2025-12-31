@@ -103,7 +103,7 @@ class FrameStack(gym.ObservationWrapper):
         stacked_frames = frames_list[::self.skip_frames+1] if self.skip_frames > 0 else frames_list
         assert len(stacked_frames) == self.num_frames, f"Expected {self.num_frames} frames, got {len(stacked_frames)}"
         
-        return np.expand_dims(np.concatenate(stacked_frames, axis=0), axis=0)
+        return np.concatenate(stacked_frames, axis=0)
 
 class SpeedInfoWrapper(gym.Wrapper):
     """ Wrapper to include car speed information """
