@@ -3,7 +3,7 @@ import torch
 import gymnasium as gym
 from agents.ppo import PPOAgent
 from agents.recording_buffer import RecordingBuffer
-from CarRacingEnv.env_wrapper import ProcessedFrame, FrameStack
+from CarRacingEnv.env_wrapper import ProcessedFrame, FrameStack, SpeedInfoWrapper, ActionRepeatWrapper, PolicyActionMapWrapper
 import signal
 import sys
 import os
@@ -20,9 +20,10 @@ from dotenv import load_dotenv
 load_dotenv()
 
 """ Hyperparameters """
+DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 TEST_MODE = False
 MODEL_FILE = "ppo_1_final.pth"  # Replace with your model file for testing
-RENDER_ENV = False
+RENDER_ENV = True
 LOG_WANDB = True
 SAVE_CHECKPOINTS = True
 TOTAL_TIMESTEPS = 800000
@@ -49,7 +50,7 @@ VALUE_COEFF = 0.01
 ENTROPY_COEFF = 0.02
 ENTROPY_DECAY = 1.0 # Set to <1.0 to decay entropy coefficient over time
 L2_REG = 1e-2 # Set to 0.0 to disable L2 regularization
-DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+PROCESS_ACTION_DECAY = 0.99 # Decay factor for action processing (speed and steering smoothing) Set to 1.0 for no decay and 0.0 no smoothing
 
 def train(env_name='CarRacing-v3', render_env=False, log_wandb=False):
     # Initialize WandB if available
@@ -71,13 +72,16 @@ def train(env_name='CarRacing-v3', render_env=False, log_wandb=False):
     env = gym.make(f'{env_name}', render_mode='human' if render_env else None)
     env = ProcessedFrame(env)
     env = FrameStack(env, num_frames=NUM_FRAMES, skip_frames=SKIP_FRAMES)
+    env = SpeedInfoWrapper(env)
+    env = PolicyActionMapWrapper(env, policy_output_dim=POLICY_OUTPUTS)
+    env = ActionRepeatWrapper(env, skip_frames=SKIP_FRAMES)
     env = gym.wrappers.RecordEpisodeStatistics(env)
     agent = PPOAgent(DEVICE, env, POLICY_OUTPUTS, NUM_EPOCHS, BATCH_SIZE,
                      GAMMA, GAE_LAMBDA, VALUE_COEFF, EPSILONS,
                      LEARNING_RATE, NUM_UPDATES, ENTROPY_COEFF, ENTROPY_DECAY,
-                     L2_REG)
+                     L2_REG, process_action_decay=PROCESS_ACTION_DECAY)
 
-    state, _ = env.reset()
+    state, info = env.reset()
     state = torch.Tensor(state).to(DEVICE)
     total_steps = 0
     update_count = 0
@@ -110,7 +114,6 @@ def train(env_name='CarRacing-v3', render_env=False, log_wandb=False):
         np.savez_compressed(replay_path, states=states, actions=actions)
         print(f"Replay saved to {replay_path}")
 
-    rolling_speed = 0.0
     # steering_buffer = deque([], maxlen=5)
     
     while total_steps < TOTAL_TIMESTEPS:
@@ -130,16 +133,15 @@ def train(env_name='CarRacing-v3', render_env=False, log_wandb=False):
         for step in range(HORIZON):
             states[step] = state
             with torch.no_grad():
-                raw_action, log_prob, value = agent.policy.get_action(state)
+                policy_action, log_prob, value = agent.policy.get_action(state)
                 values[step] = torch.tensor(value).to(DEVICE)       
-            actions[step] = torch.tensor(raw_action).to(DEVICE)
+            actions[step] = torch.tensor(policy_action).to(DEVICE)
             log_probs[step] = torch.tensor(log_prob).to(DEVICE)
-            processed_action = agent.process_action(raw_action, rolling_speed=rolling_speed)
-            rolling_speed = 0.9999*rolling_speed + processed_action[1]*0.1 - processed_action[2]
+            processed_action = agent.process_action(policy_action, info=info)
             # steering_buffer.append(processed_action[0])
 
             next_state, reward, terminated, truncated, info = env.step(processed_action)
-            episode_steps += 1
+            episode_steps += SKIP_FRAMES+1
 
             episode_reward += reward
 
@@ -162,13 +164,12 @@ def train(env_name='CarRacing-v3', render_env=False, log_wandb=False):
                     save_episode_recording(episode, episode_reward, episode_recording)
                     episode_recording.clear() # Reset for next episode
                 
-                next_state, _ = env.reset()
+                next_state, info = env.reset()
                 episode += 1
                 episode_lengths.append(episode_steps)
                 episode_steps = 0
                 episode_rewards.append(episode_reward)
                 episode_reward = 0
-                rolling_speed = 0.0
                 # steering_buffer.clear()
 
             terminateds[step] = torch.tensor(terminated).to(DEVICE)
@@ -244,9 +245,9 @@ def test(model_path="./models/ppo_final.pth"):
 
     while steps < TOTAL_TIMESTEPS:
         with torch.no_grad():
-            action, _, _ = agent.policy.get_action(state)
-        processed_action = agent.process_action(action)
-        next_state, reward, terminated, truncated, info = env.step(processed_action)
+            policy_action, _, _ = agent.policy.get_action(state)
+        # processed_action = agent.process_action(policy_action)
+        next_state, reward, terminated, truncated, info = env.step(policy_action)
         steps += 1
         if terminated or truncated:
             next_state, _ = env.reset()

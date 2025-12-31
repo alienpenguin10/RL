@@ -31,7 +31,7 @@ class ConvNet(nn.Module):
     def __init__(self, obs_shape, feature_dim=512):
         super().__init__()
         self.input_shape = obs_shape
-            
+        
         self.conv1 = layer_init(nn.Conv2d(self.input_shape[0], 32, 8, stride=4))
         self.conv2 = layer_init(nn.Conv2d(32, 64, 4, stride=2))
         self.conv3 = layer_init(nn.Conv2d(64, 64, 3, stride=1))
