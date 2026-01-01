@@ -24,7 +24,7 @@ load_dotenv()
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 from agents.networks import ConvNet_StackedFrames
-from env_wrapper import ProcessedFrame, FrameStack, ActionRemapWrapper
+from CarRacingEnv.env_wrapper import ProcessedFrame, FrameStack, ActionRemapWrapper
 
 class CustomPPORLModule(PPOTorchRLModule):
     def setup(self):
