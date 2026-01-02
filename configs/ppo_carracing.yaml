@@ -1,0 +1,51 @@
+# PPO Configuration for CarRacing-v3
+
+# General settings
+evaluation_mode: false # Set to true for loading a trained model
+model_file: ppo_model.pth
+
+# Environment settings
+env_id: CarRacing-v3
+render_environment: false
+use_grayscale: true
+use_repeat_action: false
+use_policy_action_map: true
+frame_stack: 8
+frame_skip: 2
+
+# Training settings
+max_timesteps: 1000000
+save_checkpoints: true
+checkpoint_interval: 50000
+save_recordings: false
+recording_threshold: 800.0
+use_promote_speed: true
+promote_speed_decay: 0.99
+
+# Episode settings
+use_episode_cutoff: false
+episode_cutoff_steps: 300
+episode_cutoff_penalty: -100
+use_truncated_penalty: false
+truncated_penalty: -20
+
+# Agent hyperparameters
+policy_outputs: 2  # 2: steer and speed; 3: steer, gas, brake
+buffer_size: 4096
+batch_size: 128
+epochs: 4
+learning_rate: 0.0003
+use_learning_rate_scheduler: false
+gamma: 0.99
+lambda: 0.95
+epsilon: 0.2
+value_coef: 0.01
+entropy_coef: 0.02
+entropy_decay: 1.0
+weight_decay: 0.01 # L2 regularization
+max_grad_norm: 0.5
+
+# Logging
+log_wandb: true
+project_name: rl-training
+run_name: ppo-carracing-v3

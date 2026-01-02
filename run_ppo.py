@@ -1,12 +1,16 @@
+import os
+import sys
+import signal
+import yaml
+import argparse
 import numpy as np
 import torch
 import gymnasium as gym
+from CarRacingEnv.wrappers import PreprocessWrapper
 from agents.ppo import PPOAgent
 from agents.recording_buffer import RecordingBuffer
 from CarRacingEnv.env_wrapper import ProcessedFrame, FrameStack, SpeedInfoWrapper, ActionRepeatWrapper, PolicyActionMapWrapper
-import signal
-import sys
-import os
+
 # Try to import wandb (optional)
 try:
     import wandb
@@ -19,70 +23,80 @@ except ImportError:
 from dotenv import load_dotenv
 load_dotenv()
 
-""" Hyperparameters """
-DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-TEST_MODE = False
-MODEL_FILE = "ppo_1_final.pth"  # Replace with your model file for testing
-RENDER_ENV = True
-LOG_WANDB = True
-SAVE_CHECKPOINTS = True
-TOTAL_TIMESTEPS = 800000
+def load_config(config_path):
+    with open(config_path, 'r') as f:
+        return yaml.safe_load(f)
 
-POLICY_OUTPUTS = 2 # Number of outputs from policy network - 2: steer and speed; 3: steer, gas, brake
-HORIZON = 4096
-NUM_UPDATES = int(TOTAL_TIMESTEPS / HORIZON)
-NUM_EPOCHS = 4
-NUM_MINIBATCHES = 8
-BATCH_SIZE = HORIZON // NUM_MINIBATCHES
-NUM_FRAMES = 6
-SKIP_FRAMES = 4
-CHECKPOINT_INTERVAL = 50000
-RECORDING_THRESHOLD = 800.0  # Minimum reward to save episode recording
+def create_env(env_name='CarRacing-v3', render_env=False, use_grayscale=True, use_repeat_action=False,
+               use_policy_action_map=True, policy_outputs=3, frame_stack=8, frame_skip=2, use_promote_speed=False):
+    render_mode = "human" if render_env else None
+    env = gym.make(env_name, continuous=True, render_mode=render_mode)
+    if use_grayscale:
+        env = ProcessedFrame(env)
+    env = FrameStack(env, num_frames=frame_stack, skip_frames=frame_skip) if frame_stack > 1 else env
+    if use_repeat_action:
+        env = ActionRepeatWrapper(env, skip_frames=frame_skip)
+    if use_policy_action_map:
+        env = PolicyActionMapWrapper(env, policy_output_dim=policy_outputs)
+    if use_promote_speed:
+        env = SpeedInfoWrapper(env)
+    
+    return env
 
-EPISODE_CUTOFF = 1001 # Early termination if no progress for n steps, set to >1000 to disable
-CUTOFF_PENALTY = -100.0 # Penalty for early cutoff
-TRUNCATED_PENALTY = -20.0 # Penalty for episode truncation due to time limit
-LEARNING_RATE = 3e-4
-GAMMA = 0.99
-GAE_LAMBDA = 0.95
-EPSILONS = 0.2 # Clipping ratio for PPO
-VALUE_COEFF = 0.01
-ENTROPY_COEFF = 0.02
-ENTROPY_DECAY = 1.0 # Set to <1.0 to decay entropy coefficient over time
-L2_REG = 1e-2 # Set to 0.0 to disable L2 regularization
-PROCESS_ACTION_DECAY = 0.99 # Decay factor for action processing (speed and steering smoothing) Set to 1.0 for no decay and 0.0 no smoothing
+def train(device, config):
+    env_name = config['env_id']
+    use_repeat_action = config.get('use_repeat_action', False)
+    total_timesteps = config['max_timesteps']
+    horizon = config['buffer_size']
+    frame_skip = config['frame_skip']
+    policy_outputs = config['policy_outputs']
+    use_episode_cutoff = config['use_episode_cutoff']
+    episode_cutoff = config['episode_cutoff_steps']
+    cutoff_penalty = config['episode_cutoff_penalty']
+    use_truncated_penalty = config['use_truncated_penalty']
+    truncated_penalty = config['truncated_penalty']
+    save_recordings = config['save_recordings']
+    recording_threshold = config['recording_threshold']
+    save_checkpoints = config['save_checkpoints']
+    checkpoint_interval = config['checkpoint_interval']
+    log_wandb = config['log_wandb']
 
-def train(env_name='CarRacing-v3', render_env=False, log_wandb=False):
-    # Initialize WandB if available
     if WANDB_AVAILABLE and log_wandb:
         wandb.init(
-            project="rl-training",
-            name=f"ppo_{env_name}",
-            config={
-                "algorithm": "ppo",
-                "environment": env_name,
-                "max_timesteps": TOTAL_TIMESTEPS,
-                "buffer_size": HORIZON,
-                "mini_batch_size": BATCH_SIZE,
-                "learning_rate": LEARNING_RATE,
-                "epochs": NUM_EPOCHS,
-            }
+            project=config.get('project_name', 'rl-training'),
+            name=config.get('run_name', f'ppo_{env_name}'),
+            config=config
         )
     
-    env = gym.make(f'{env_name}', render_mode='human' if render_env else None)
-    env = ProcessedFrame(env)
-    env = FrameStack(env, num_frames=NUM_FRAMES, skip_frames=SKIP_FRAMES)
-    env = SpeedInfoWrapper(env)
-    env = PolicyActionMapWrapper(env, policy_output_dim=POLICY_OUTPUTS)
-    env = ActionRepeatWrapper(env, skip_frames=SKIP_FRAMES)
-    env = gym.wrappers.RecordEpisodeStatistics(env)
-    agent = PPOAgent(DEVICE, env, POLICY_OUTPUTS, NUM_EPOCHS, BATCH_SIZE,
-                     GAMMA, GAE_LAMBDA, VALUE_COEFF, EPSILONS,
-                     LEARNING_RATE, NUM_UPDATES, ENTROPY_COEFF, ENTROPY_DECAY,
-                     L2_REG, process_action_decay=PROCESS_ACTION_DECAY)
+    env = create_env(env_name=env_name,
+                     render_env=config.get('render_environment', False),
+                     use_grayscale=config.get('use_grayscale', True),
+                     use_repeat_action=use_repeat_action,
+                     use_policy_action_map=config.get('use_policy_action_map', True),
+                     policy_outputs=config.get('policy_outputs', 3),
+                     frame_stack=config.get('frame_stack', 8),
+                     frame_skip=config.get('frame_skip', 2),
+                     use_promote_speed=config.get('use_promote_speed', False))
+
+    agent = PPOAgent(device, env,
+                     policy_outputs=policy_outputs,
+                     num_epochs=config.get('num_epochs', 4),
+                     batch_size=config.get('batch_size', 512),
+                     gamma=config.get('gamma', 0.99),
+                     gae_lambda=config.get('gae_lambda', 0.95),
+                     value_coef=config.get('value_coef', 0.01),
+                     epsilons=config.get('epsilons', 0.2),
+                     learning_rate=config.get('learning_rate', 3e-4),
+                     use_lr_scheduler=config.get('use_lr_scheduler', False),
+                     lr_updates=int(total_timesteps / horizon),
+                     entropy_coef=config.get('entropy_coef', 0.02),
+                     entropy_decay=config.get('entropy_decay', 1.0),
+                     l2_reg=config.get('weight_decay', 1e-2),
+                     max_grad_norm=config.get('max_grad_norm', 0.0),
+                     process_action_decay=config.get('process_action_decay', 0.99))
 
     state, info = env.reset()
-    state = torch.Tensor(state).to(DEVICE)
+    state = torch.Tensor(state).to(device)
     total_steps = 0
     update_count = 0
     episode = 0 # Track current episode for saving on interrupt
@@ -116,48 +130,47 @@ def train(env_name='CarRacing-v3', render_env=False, log_wandb=False):
 
     # steering_buffer = deque([], maxlen=5)
     
-    while total_steps < TOTAL_TIMESTEPS:
-        states = torch.zeros((HORIZON, *env.observation_space.shape)).to(DEVICE)
-        actions = torch.zeros((HORIZON, POLICY_OUTPUTS)).to(DEVICE)
-        rewards = torch.zeros((HORIZON)).to(DEVICE)
-        terminateds = torch.zeros((HORIZON)).to(DEVICE)
-        truncateds = torch.zeros((HORIZON)).to(DEVICE)
-        values = torch.zeros((HORIZON)).to(DEVICE)
-        log_probs = torch.zeros((HORIZON)).to(DEVICE)
+    while total_steps < total_timesteps:
+        states = torch.zeros((horizon, *env.observation_space.shape)).to(device)
+        actions = torch.zeros((horizon, policy_outputs)).to(device)
+        rewards = torch.zeros((horizon)).to(device)
+        terminateds = torch.zeros((horizon)).to(device)
+        truncateds = torch.zeros((horizon)).to(device)
+        values = torch.zeros((horizon)).to(device)
+        log_probs = torch.zeros((horizon)).to(device)
 
-        # state, _ = env.reset()
-        # state = torch.Tensor(state).to(DEVICE)
+        # Initialize episode reward with carryover from previous rollout
         episode_reward += carryover_reward
 
         # Rollout
-        for step in range(HORIZON):
+        for step in range(horizon):
             states[step] = state
             with torch.no_grad():
                 policy_action, log_prob, value = agent.policy.get_action(state)
-                values[step] = torch.tensor(value).to(DEVICE)       
-            actions[step] = torch.tensor(policy_action).to(DEVICE)
-            log_probs[step] = torch.tensor(log_prob).to(DEVICE)
+                values[step] = torch.tensor(value).to(device)       
+            actions[step] = torch.tensor(policy_action).to(device)
+            log_probs[step] = torch.tensor(log_prob).to(device)
             processed_action = agent.process_action(policy_action, info=info)
             # steering_buffer.append(processed_action[0])
 
             next_state, reward, terminated, truncated, info = env.step(processed_action)
-            episode_steps += SKIP_FRAMES+1
+            episode_steps += frame_skip+1 if use_repeat_action else 1
 
             episode_reward += reward
 
             # Crucial: Only treat as 'done' if terminated (failure), not truncated (time limit)
-            if (episode_steps >= EPISODE_CUTOFF and rewards.numel() >= EPISODE_CUTOFF and rewards[step-EPISODE_CUTOFF+1:step-1].sum() < -EPISODE_CUTOFF*0.09):
+            if use_episode_cutoff and episode_steps >= episode_cutoff and rewards.numel() >= episode_cutoff and rewards[step-episode_cutoff+1:step-1].sum() < -episode_cutoff*0.09:
                 # Early termination if no progress for extended period
-                penalty = min(CUTOFF_PENALTY + (episode_steps-EPISODE_CUTOFF) * 0.1, 0.0) # Large negative reward for stagnation reduced if car was performing well before
+                penalty = min(cutoff_penalty + (episode_steps-episode_cutoff) * 0.1, 0.0) # Large negative reward for stagnation reduced if car was performing well before
                 reward += penalty
                 episode_reward += penalty
                 truncated = True
-            if truncated:
-                reward += TRUNCATED_PENALTY
-                episode_reward += TRUNCATED_PENALTY
+            if use_truncated_penalty and truncated:
+                reward += truncated_penalty
+                episode_reward += truncated_penalty
             if terminated or truncated:
                 print(f"Episode {episode} finished - Steps: {episode_steps}, Reward: {episode_reward}")
-                if episode_reward > RECORDING_THRESHOLD:
+                if save_recordings and episode_reward > recording_threshold:
                     episode_slice = slice(step-episode_steps+1, step+1)
                     episode_recording.push_batch(states[episode_slice].cpu().numpy(), 
                                                 actions[episode_slice].cpu().numpy())
@@ -172,10 +185,10 @@ def train(env_name='CarRacing-v3', render_env=False, log_wandb=False):
                 episode_reward = 0
                 # steering_buffer.clear()
 
-            terminateds[step] = torch.tensor(terminated).to(DEVICE)
-            truncateds[step] = torch.tensor(truncated).to(DEVICE)
-            rewards[step] = torch.tensor(reward).to(DEVICE)
-            state = torch.Tensor(next_state).to(DEVICE)
+            terminateds[step] = torch.tensor(terminated).to(device)
+            truncateds[step] = torch.tensor(truncated).to(device)
+            rewards[step] = torch.tensor(reward).to(device)
+            state = torch.Tensor(next_state).to(device)
             total_steps += 1
             carryover_reward = episode_reward # Saves episode reward between rollouts
         
@@ -215,35 +228,40 @@ def train(env_name='CarRacing-v3', render_env=False, log_wandb=False):
         if WANDB_AVAILABLE and log_wandb:
             wandb.log(log_dict)
         
-        if SAVE_CHECKPOINTS and (total_steps >= checkpoint):
+        if save_checkpoints and (total_steps >= checkpoint):
             agent.save_model(f"./models/ppo_{episode}_checkpoint.pth")
-            checkpoint += CHECKPOINT_INTERVAL
+            checkpoint += checkpoint_interval
     
     # Save final model
     print(f"\nTraining complete! Saving final model...")
     agent.save_model(f"./models/ppo_{episode}_final.pth")
 
-    if WANDB_AVAILABLE:
+    if WANDB_AVAILABLE and log_wandb:
         wandb.finish()
     
     env.close()
 
-def test(model_path="./models/ppo_final.pth"):
-    env = gym.make(f'{env_name}', render_mode='human')
-    env = ProcessedFrame(env)
-    env = FrameStack(env, num_frames=NUM_FRAMES, skip_frames=SKIP_FRAMES)
-    env = gym.wrappers.RecordEpisodeStatistics(env)
-    agent = PPOAgent(DEVICE, env, POLICY_OUTPUTS, NUM_EPOCHS, BATCH_SIZE,
-                     GAMMA, GAE_LAMBDA, VALUE_COEFF, EPSILONS,
-                     LEARNING_RATE, NUM_UPDATES, ENTROPY_COEFF, ENTROPY_DECAY,
-                     L2_REG)
+def test(device, config, model_path):
+    policy_outputs = config['policy_outputs']
+    env = create_env(env_name=config.get('env_id', 'CarRacing-v3'),
+                     render_env=True,
+                     use_grayscale=False,
+                     use_repeat_action=False,
+                     use_policy_action_map=True,
+                     policy_outputs=policy_outputs,
+                     frame_stack=config.get('frame_stack', 4),
+                     frame_skip=config.get('frame_skip', 0),
+                     use_promote_speed=False)
+    
+    agent = PPOAgent(device, env,
+                     policy_outputs=policy_outputs)
     agent.load_model(model_path)
 
     state, _ = env.reset()
-    state = torch.Tensor(state).to(DEVICE)
+    state = torch.Tensor(state).to(device)
     steps = 0
 
-    while steps < TOTAL_TIMESTEPS:
+    while steps < 5000:
         with torch.no_grad():
             policy_action, _, _ = agent.policy.get_action(state)
         # processed_action = agent.process_action(policy_action)
@@ -251,21 +269,23 @@ def test(model_path="./models/ppo_final.pth"):
         steps += 1
         if terminated or truncated:
             next_state, _ = env.reset()
-        state = torch.Tensor(next_state).to(DEVICE)
+        state = torch.Tensor(next_state).to(device)
 
 if __name__ == '__main__':
     # Ensure models directory exists
     os.makedirs("./models", exist_ok=True)
-
     # Ensure replay directory exists
     os.makedirs("./models/replay", exist_ok=True)
+    
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--config', type=str, required=True, help='Path to config file')
+    args = parser.parse_args()
+    config = load_config(args.config)
 
-    env_name = 'CarRacing-v3'
-    log_wandb = LOG_WANDB
-    render_env = RENDER_ENV
-    if TEST_MODE:
+    if config.get('evaluation_mode', False):
         print("Running in TEST MODE")
-        test(f"./models/{MODEL_FILE}")
+        test(device, config, f"./models/{config.get('model_file', 'not_specified.pth')}")
     else:
         print("Running in TRAINING MODE")
-        train(env_name=env_name, render_env=render_env, log_wandb=log_wandb)
+        train(device, config)

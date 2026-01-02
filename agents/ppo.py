@@ -5,27 +5,28 @@ from torch.optim import Adam
 from torch.optim.lr_scheduler import LinearLR
 
 class PPOAgent:
-    def __init__(self, device,
-                 env, policy_outputs, epochs, batch_size,
-                 gamma, gae_lambda, value_coeff, epsilons,
-                 lr, lr_updates, entropy_coeff, entropy_decay,
-                 l2_reg, process_action_decay=0.0):
+    def __init__(self, device, env,
+                 policy_outputs=3, num_epochs=4, batch_size=128,
+                 gamma=0.99, gae_lambda=0.95, value_coef=0.01, epsilons=0.2,
+                 learning_rate=3e-4, use_lr_scheduler=False, lr_updates=0, entropy_coef=0.02, entropy_decay=1.0,
+                 l2_reg=1e-2, max_grad_norm=0.0, process_action_decay=0.0):
         
         self.device = device
         self.observation_dims = env.observation_space.shape
         self.action_dims = policy_outputs
         self.policy = ActorCritic(obs_shape=self.observation_dims, action_dim=2).to(device) if policy_outputs == 2 else ActorCriticThreeOutput(obs_shape=self.observation_dims, action_dim=3).to(device)
-        self.optimizer = Adam(self.policy.parameters(), lr=lr, weight_decay=l2_reg)
-        self.lr_scheduler = LinearLR(self.optimizer, start_factor=1.0, end_factor=0.1, total_iters=lr_updates)
-        self.epochs = epochs
-        self.entropy_coef = entropy_coeff
+        self.optimizer = Adam(self.policy.parameters(), lr=learning_rate, weight_decay=l2_reg)
+        self.lr_scheduler = LinearLR(self.optimizer, start_factor=1.0, end_factor=0.1, total_iters=lr_updates) if use_lr_scheduler and lr_updates > 0 else None
+        self.epochs = num_epochs
+        self.entropy_coef = entropy_coef
         self.entropy_decay = entropy_decay
         self.batch_size = batch_size
         self.epsilons = epsilons
-        self.value_coeff = value_coeff
+        self.value_coeff = value_coef
         self.gamma = gamma
         self.gae_lambda = gae_lambda
         self.process_action_coef = 1.0 if process_action_decay > 0.0 else 0.0
+        self.max_grad_norm = max_grad_norm
         self.process_action_decay = process_action_decay
     
     def update(self, rollouts):
@@ -71,7 +72,8 @@ class PPOAgent:
 
                 self.optimizer.zero_grad()
                 total_loss.backward()
-                torch.nn.utils.clip_grad_norm_(self.policy.parameters(), 0.5)
+                if self.max_grad_norm > 0.0:
+                    torch.nn.utils.clip_grad_norm_(self.policy.parameters(), self.max_grad_norm)
                 self.optimizer.step()
 
         # Decay entropy coefficient
@@ -80,8 +82,9 @@ class PPOAgent:
         # Decay action processing influence
         if self.process_action_decay < 1.0:
             self.process_action_coef *= self.process_action_decay
-            
-        # self.lr_scheduler.step()
+        
+        if self.lr_scheduler is not None:
+            self.lr_scheduler.step()
 
         return {
             'policy_loss': policy_loss.item(),
@@ -131,7 +134,6 @@ class PPOAgent:
 
         processed_action = action.copy()
         speed = info.get("speed")
-        print(f"Car speed: {speed}")
         if speed is not None and self.process_action_coef > 0.0:
             # Limit braking based on current speed to encourage forward movement
             if self.action_dims == 2:
