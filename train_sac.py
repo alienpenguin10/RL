@@ -8,7 +8,7 @@ import time
 import yaml
 import argparse
 from gymnasium.wrappers import RecordVideo
-from wrappers import PreprocessWrapper, FrameSkipWrapper, FrameStack, ThrottleActionWrapper
+from wrappers import PreprocessWrapper, FrameSkipWrapper, FrameStack, ThrottleActionWrapper, RewardShapingWrapper
 
 
 def load_config(config_path):
@@ -30,7 +30,7 @@ except ImportError:
     print("wandb not available - training will continue without logging")
 
 
-def create_env(env_name, use_grayscale, use_frame_stack, use_repeat_action,
+def create_env(env_name, use_grayscale, use_frame_stack, use_skip_frame,
                n_stack, use_throttle_action=True, record_video=False,
                video_folder=None, video_interval=10):
     render_mode = "rgb_array" if record_video else None
@@ -38,6 +38,13 @@ def create_env(env_name, use_grayscale, use_frame_stack, use_repeat_action,
 
     if use_throttle_action:
         env = ThrottleActionWrapper(env)
+
+    env = RewardShapingWrapper(
+        env, 
+        reward_scale=1,     # Scales 7.0 -> 0.35
+        skip_zoom_steps=50,    # Skips the uncontrollable intro
+        patience=100           # Kills episode if stuck for 100 steps
+    )
 
     if record_video and video_folder:
         os.makedirs(video_folder, exist_ok=True)
@@ -49,11 +56,12 @@ def create_env(env_name, use_grayscale, use_frame_stack, use_repeat_action,
             disable_logger=True
         )
 
-    if use_grayscale and use_frame_stack:
-        env = PreprocessWrapper(env, resize=(84, 84))
-        if use_repeat_action:
-            env = FrameSkipWrapper(env, skip=n_stack)
-        env = FrameStack(env, num_frames=n_stack)
+    if use_frame_stack or use_grayscale:
+        env = PreprocessWrapper(
+            env, 
+            resize=(84, 84), 
+            grayscale=use_grayscale
+        )
 
     return env
 
@@ -64,7 +72,7 @@ def train_sac_stepwise(config):
     start_steps = config['start_steps']
     checkpoint_interval = config['checkpoint_interval']
     use_grayscale = config['use_grayscale']
-    use_repeat_action = config['use_repeat_action']
+    use_skip_frame = config['use_skip_frame']
     use_frame_stack = config['use_frame_stack']
     use_throttle_action = config.get('use_throttle_action', False)
     n_stack = config.get('n_stack', 4)
@@ -85,14 +93,14 @@ def train_sac_stepwise(config):
         )
 
     env = create_env(
-        env_name, use_grayscale, use_frame_stack, use_repeat_action,
+        env_name, use_grayscale, use_frame_stack, use_skip_frame,
         n_stack, use_throttle_action, record_video=False
     )
 
     print("Environment Configuration:")
     print(f"  Use Grayscale: {use_grayscale}")
     print(f"  Use Frame Stack: {use_frame_stack} (n_stack={n_stack})")
-    print(f"  Use Repeat Action: {use_repeat_action}")
+    print(f"  Use Repeat Action: {use_skip_frame}")
     print(f"  Use Throttle Action: {use_throttle_action}")
     if use_throttle_action:
         print(f"    → Action space: [steering, throttle] (2D)")
@@ -102,7 +110,7 @@ def train_sac_stepwise(config):
 
     # Create EVALUATION environment (with video recording)
     eval_env = create_env(
-        env_name, use_grayscale, use_frame_stack, use_repeat_action,
+        env_name, use_grayscale, use_frame_stack, use_skip_frame,
         n_stack, use_throttle_action, record_video=record_video,
         video_folder=video_folder, video_interval=video_interval
     )
