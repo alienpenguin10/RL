@@ -1,7 +1,6 @@
 import numpy as np
 import torch
 
-## Mostly done by Claude
 class RolloutBuffer:
     def __init__(self, buffer_size, state_dim, action_dim, device, gamma, lam):
         self.buffer_size = buffer_size

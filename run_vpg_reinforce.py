@@ -55,17 +55,6 @@ def train(env_name="CarRacing-v3", algo="vpg", max_episodes=1000,
         agent = REINFORCEAgent(learning_rate=0.001)
     elif algo == "vpg":
         agent = VPGAgent(learning_rate=0.0003)
-    elif algo == "ppo":
-        agent = PPOAgent(learning_rate=0.0003)
-    elif algo == "sac":
-        agent = SACAgent(action_dim=action_dim)
-        batch_size = agent.batch_size
-        buffer_path = "./models/sac_replay_buffer.pkl"
-        buffer_loaded = False
-        if os.path.exists(buffer_path):
-            agent.load_replay_buffer(buffer_path)
-            print("Loaded replay buffer from disk.")
-            buffer_loaded = True
     else:
         raise ValueError(f"Unknown algorithm: {algo}")
         

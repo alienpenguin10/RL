@@ -88,41 +88,6 @@ class PolicyNetwork(nn.Module):
         
         return action, log_prob, entropy
 
-    def step_new(self, state):
-        """SAC action sampling with tanh squashing and log-prob correction"""
-        # Forward pass
-        mu, logstd = self.forward(state)
-        std = logstd.exp()
-        
-        # Create distribution and sample with reparameterization
-        dist = Normal(mu, std)
-        actions = dist.rsample()  # Reparameterization trick for gradients
-        batch_size = actions.shape[0]
-        
-        # Log probability before squashing
-        log_prob = dist.log_prob(actions).sum(dim=-1)
-        
-        # Apply tanh squashing
-        squashed = torch.tanh(actions)
-        
-        # Log-prob correction for tanh squashing (more stable formula)
-        # Corrects for the change of variables: log π(a) = log μ(u) - log|da/du|
-        log_prob_correction = torch.log(1 - squashed.pow(2) + 1e-6).sum(dim=1)
-        log_prob = log_prob - log_prob_correction
-        
-        # Scale actions to environment ranges
-        steering_action = squashed[:, 0].view(batch_size, 1)  # [-1, 1]
-        gas_action = ((squashed[:, 1] + 1) / 2).view(batch_size, 1)  # [0, 1]
-        brake_action = ((squashed[:, 2] + 1) / 2).view(batch_size, 1)  # [0, 1]
-        
-        # Clamp brake to valid range
-        brake_action = torch.clamp(brake_action, 0.0, 1.0)
-        
-        # Concatenate final action
-        action = torch.cat((steering_action, gas_action, brake_action), dim=1)
-        
-        return action, log_prob
-
     def act(self, state):
         with torch.no_grad():
             # We can use step but ignore log_prob
@@ -135,22 +100,13 @@ class PolicyNetwork(nn.Module):
             return means.cpu().numpy()
 
     def get_log_prob(self, states, actions):
-        # states, actions are taken from experiecne replay buffer and get_log_prob computes what log probability the current policy would give those states and actions 
-        # Computes log π(a|s): Allows recomputing log_prob with gradients during policy updates
-        # Part of the policy gradient: ∇θ J(θ) = E[∇θ log π(a|s) * A]
-        # Enables backpropagation (gradient can flow): get_log_prob -> policy_network -> policy_loss -> optimizer.step()
 
-        # Step 1: Forward pass  
         means, log_stds = self.forward(states) # means:(batch_size, 3) = [[steering_mean, gas_mean, brake_mean]], log_stds:(batch_size, 3) = [[steering_log_std, gas_log_std, brake_log_std]]
         
-        # Step 2: Convert log_std to std
         stds = torch.exp(log_stds) # stds:(batch_size, 3) = [[steering_std, gas_std, brake_std]]
         
-        # Step 3: Create Gaussian distribution
         dist = torch.distributions.Normal(means, stds) # dist: Gaussian distribution with mean and std
         
-        # Step 4: Calculate log probability
-        # Important: sum log_probs across the action dimensions
         log_probs = dist.log_prob(actions).sum(dim=1) # log_probs:(batch_size,) = [total_log_prob] = [log_prob_steering + log_prob_gas + log_prob_brake] = [log(Normal(0.2, 0.223).pdf(steering_raw)) + log(Normal(0.7, 0.135).pdf(gas_raw)) + log(Normal(0.1, 0.050).pdf(brake_raw))]
         
         return log_probs
