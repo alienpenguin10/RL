@@ -60,14 +60,14 @@ python car_racing_env.py
 ### Training Examples
 
 
-**PPO on Car Racing:**
+**Train PPO Agent on Car Racing:**
 ```bash
-python RL-Baselines/train_ppo_car.py
+python python run_ppo.py --config ./configs/sac_carracing-throttle-hidden-dims.yaml
 ```
 
-**SAC on Car Racing:**
+**Train SAC Agent on Car Racing:**
 ```bash
-python RL-Baselines/train_sac_car.py
+python python run_sac.py --config ./configs/sac_carracing-throttle-hidden-dims.yaml
 ```
 
 ## 📂 Project Structure
@@ -78,21 +78,20 @@ python RL-Baselines/train_sac_car.py
 │   ├── dqn_cartpole.py
 │   ├── q_frozenlake.py
 │   └── REINFORCE_lunar_landing.py
-├── APPO/                    # APPO algorithm implementation
-├── PPO/                     # PPO algorithm implementation
-├── SAC/                     # SAC algorithm implementation
-├── VPG/                     # Vanilla Policy Gradient
-├── Reinforce/               # REINFORCE algorithm
-├── RL-Baselines/            # Baseline implementations for benchmarking
-├── assets/                  # GIFs and visualizations
-├── data/                    # Saved models
-└── car_racing_env.py        # Car Racing environment simulation
+├── baseline/            # Baseline implementations for benchmarking
+├── agents/                    # Saved models
+├── evaluation/                    # Inference and run env in manual mode
+├── plots/                  # GIFs and visualizations
+├── models/                    # Saved models
+├── CarRacingEnv/                    # Environment Adjustments
+├── run_sac.py        # Train SAC agent
+├── run_vpg_reinforce.py        # Train VPG / REINFORCE agents
+└── run_ppo.py        # Train PPO agent
 ```
 
-## 🧠 Algorithms To Be Implemented
+## 🧠 Algorithms Implemented
 
 - **REINFORCE**: Monte Carlo policy gradient
 - **VPG (Vanilla Policy Gradient)**: Basic policy gradient method
 - **PPO (Proximal Policy Optimization)**: State-of-the-art policy gradient
 - **SAC (Soft Actor-Critic)**: Off-policy actor-critic algorithm
-- **APPO (Asynchronous PPO)**: Distributed PPO variant
