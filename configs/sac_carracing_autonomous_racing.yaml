@@ -1,0 +1,48 @@
+# https://proceedings.neurips.cc/paper_files/paper/2024/hash/b91ea2ba1b6521940e204b7b81d5ef47-Abstract-Datasets_and_Benchmarks_Track.html
+# SAC Configuration for CarRacing-v3
+
+# Environment settings
+env_id: CarRacing-v3
+use_grayscale: true
+use_frame_stack: true
+use_skip_frame: true
+use_throttle_action: true
+n_stack: 4
+
+# Training settings
+max_timesteps: 500000
+start_steps: 2000 # Random warmup steps
+checkpoint_interval: 5000  # How often to evaluate + record video
+log_freq: 1000
+
+# Agent hyperparameters
+batch_size: 128
+gamma: 0.98 # following heuristics in the https://arxiv.org/pdf/2310.16828 paper
+tau: 0.005
+alpha: 0.1
+automatic_entropy_tuning: true
+policy_learning_rate: 0.0003
+q_learning_rate: 0.0003
+alpha_learning_rate: 0.0003
+policy_weight_decay: 0.0001
+q_weight_decay: 0.0001
+alpha_weight_decay: 0.0001
+
+# Network architecture
+q_hidden_dims: [ 256, 256, 256 ]
+policy_hidden_dims: [ 256, 256, 256 ]
+
+# Replay buffer
+buffer_size: 1000000
+
+# Training dynamics
+train_freq: 3  # Update every N steps
+gradient_steps: 1  # Number of gradient updates per training step
+
+# Episode settings
+max_ep_len: 1000
+
+# Logging
+project_name: rl-training
+run_name: sac-carracing-v3-autonomous-racing
+record_video: true
