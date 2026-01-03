@@ -46,6 +46,9 @@ def create_env(env_name, use_grayscale, use_frame_stack, use_skip_frame,
         patience=100           # Kills episode if stuck for 100 steps
     )
 
+    if use_skip_frame:
+        env = FrameSkipWrapper(env, skip=4)
+
     if record_video and video_folder:
         os.makedirs(video_folder, exist_ok=True)
         env = RecordVideo(

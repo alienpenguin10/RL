@@ -2,7 +2,7 @@
 
 # Environment settings
 env_id: CarRacing-v3
-use_grayscale: false
+use_grayscale: true
 use_frame_stack: true
 use_skip_frame: true
 use_throttle_action: true
@@ -10,8 +10,8 @@ n_stack: 4
 
 # Training settings
 max_timesteps: 500000
-start_steps: 10000 # Random warmup steps
-checkpoint_interval: 10000  # How often to evaluate + record video
+start_steps: 20000 # Random warmup steps
+checkpoint_interval: 5000  # How often to evaluate + record video
 log_freq: 1000
 
 # Agent hyperparameters
@@ -28,15 +28,15 @@ q_weight_decay: 0.0001
 alpha_weight_decay: 0.0001
 
 # Network architecture
-q_hidden_dims: [512, 256]
-policy_hidden_dims: [512, 256]
+q_hidden_dims: [512, 256, 256]
+policy_hidden_dims: [512, 256, 256]
 
 # Replay buffer
-buffer_size: 100_000
+buffer_size: 100000
 
 # Training dynamics
 train_freq: 1  # Update every N steps
-gradient_steps: 1  # Number of gradient updates per training step
+gradient_steps: 2  # Number of gradient updates per training step
 
 # Episode settings
 max_ep_len: 1000
