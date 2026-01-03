@@ -66,6 +66,9 @@ def create_env(env_name, use_grayscale, use_frame_stack, use_skip_frame,
             grayscale=use_grayscale
         )
 
+    if use_frame_stack:
+        env = FrameStack(env, n_stack)
+
     return env
 
 def train_sac_stepwise(config):
