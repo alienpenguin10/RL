@@ -28,8 +28,8 @@ q_weight_decay: 0.0001
 alpha_weight_decay: 0.0001
 
 # Network architecture
-q_hidden_dims: [512, 256, 256]
-policy_hidden_dims: [512, 256, 256]
+q_hidden_dims: [ 512, 256, 256 ]
+policy_hidden_dims: [ 512, 256, 256 ]
 
 # Replay buffer
 buffer_size: 100000
@@ -43,5 +43,5 @@ max_ep_len: 1000
 
 # Logging
 project_name: rl-training
-run_name: sac-carracing-v3-throttle
+run_name: sac-carracing-v3-throttle-cleanup
 record_video: true

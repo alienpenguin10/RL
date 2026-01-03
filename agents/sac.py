@@ -1,11 +1,13 @@
+import pickle
+
+import numpy as np
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
+
 from agents.base import BaseAgent
 from agents.networks import PolicyNetwork, QNetwork
 from agents.replay_buffer import ReplayBuffer
-import pickle
-import numpy as np
-import torch.nn.functional as F
 
 
 class SACAgent(BaseAgent):
@@ -84,7 +86,7 @@ class SACAgent(BaseAgent):
     def select_action(self, state, deterministic=False):
         state_tensor = torch.as_tensor(state, dtype=torch.float32, device=self.device).unsqueeze(0)
         with torch.no_grad():
-            action, _, _ = self.policy_network.step(state_tensor, deterministic)
+            action, _, _ = self.policy_network.sample(state_tensor, deterministic)
         return action.cpu().numpy()[0].astype(np.float32)
 
     def store_transition(self, state, action, reward, next_state, log_prob, done, value=None):
@@ -102,7 +104,7 @@ class SACAgent(BaseAgent):
         # === Q-NETWORK UPDATE ===
         # Compute target for Q functions
         with torch.no_grad():
-            next_action, next_log_prob, _ = self.policy_network.step(batch['next_obs'])
+            next_action, next_log_prob, _ = self.policy_network.sample(batch['next_obs'])
             qf1_next = self.q_net_1_target(batch['next_obs'], next_action)
             qf2_next = self.q_net_2_target(batch['next_obs'], next_action)
             min_q_next = torch.min(qf1_next, qf2_next)
@@ -123,7 +125,7 @@ class SACAgent(BaseAgent):
         self.q_optim_2.step()
         
         # === POLICY UPDATE ===
-        acts, log_prob, _ = self.policy_network.step(batch['obs'])
+        acts, log_prob, _ = self.policy_network.sample(batch['obs'])
         qf1 = self.q_net_1(batch['obs'], acts)
         qf2 = self.q_net_2(batch['obs'], acts)
         min_qf = torch.min(qf1, qf2)

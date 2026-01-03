@@ -1,14 +1,14 @@
-import gymnasium as gym
-from agents.reinforce import REINFORCEAgent
-from agents.vpg import VPGAgent
-from agents.ppo_old import PPOAgent
-from agents.sac import SACAgent
 import os
 import signal
 import sys
-import numpy as np
 import time
+
+import gymnasium as gym
+import numpy as np
 from gymnasium.wrappers import FrameStackObservation, GrayscaleObservation
+
+from agents.reinforce import REINFORCEAgent
+from agents.vpg import VPGAgent
 
 # Try to import wandb (optional)
 try:
@@ -20,6 +20,7 @@ except ImportError:
 
 # Load environment variables from .env file
 from dotenv import load_dotenv
+
 load_dotenv()
 
 
