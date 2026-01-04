@@ -1,3 +1,4 @@
+# https://ieeexplore.ieee.org/abstract/document/9718218
 # SAC Configuration for CarRacing-v3
 
 # Environment settings
@@ -10,38 +11,38 @@ n_stack: 4
 
 # Training settings
 max_timesteps: 500000
-start_steps: 20000 # Random warmup steps
+start_steps: 2000 # Random warmup steps
 checkpoint_interval: 5000  # How often to evaluate + record video
 log_freq: 1000
 
 # Agent hyperparameters
-batch_size: 128
-gamma: 0.99
+batch_size: 256
+gamma: 0.9
 tau: 0.005
 alpha: 0.1
 automatic_entropy_tuning: true
-policy_learning_rate: 0.0003
-q_learning_rate: 0.0003
-alpha_learning_rate: 0.0001
+policy_learning_rate: 0.0005
+q_learning_rate: 0.0005
+alpha_learning_rate: 0.0005
 policy_weight_decay: 0.0001
 q_weight_decay: 0.0001
 alpha_weight_decay: 0.0001
 
 # Network architecture
-q_hidden_dims: [ 512, 256, 256 ]
-policy_hidden_dims: [ 512, 256, 256 ]
+q_hidden_dims: [ 256, 256, 256 ]
+policy_hidden_dims: [ 256, 256, 256 ]
 
 # Replay buffer
-buffer_size: 100000
+buffer_size: 1000000
 
 # Training dynamics
 train_freq: 1  # Update every N steps
-gradient_steps: 2  # Number of gradient updates per training step
+gradient_steps: 1  # Number of gradient updates per training step
 
 # Episode settings
 max_ep_len: 1000
 
 # Logging
 project_name: rl-training
-run_name: sac-carracing-v3-throttle-cleanup
+run_name: sac-carracing-v3-lane-change
 record_video: true

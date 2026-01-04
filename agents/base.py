@@ -1,6 +1,8 @@
+import numpy as np
 import torch
 import torch.nn as nn
-import numpy as np
+from typing_extensions import override
+
 
 class BaseAgent:
     def __init__(self, learning_rate=0.001, gamma=0.99):
@@ -13,7 +15,7 @@ class BaseAgent:
             self.device = torch.device("cuda")
         else:
             self.device = torch.device("cpu")
-        
+
         self.clear_memory()
 
     def clear_memory(self):
@@ -25,14 +27,16 @@ class BaseAgent:
         self.terminated = []
         self.truncated = []
 
-    def store_transition(self, state, action, reward, log_prob, terminated, truncated, value=None):
+    def store_transition(
+        self, state, action, reward, log_prob, terminated, truncated, value=None
+    ):
         # Standardized signature
         self.states.append(state)
         self.actions.append(action)
         self.rewards.append(reward)
         self.log_probs.append(log_prob)
-        self.terminated.append(terminated) 
-        self.truncated.append(truncated) 
+        self.terminated.append(terminated)
+        self.truncated.append(truncated)
         self.values.append(value)
 
     def preprocess_state(self, state):
@@ -45,29 +49,20 @@ class BaseAgent:
                 state = torch.from_numpy(state).float()
             else:
                 raise ValueError(f"Unexpected state shape: {state.shape}")
-        
+
         if state.dim() == 3:
             state = state.unsqueeze(0)  # Add batch dimension -> (1, C, H, W)
-        
+
         return state.to(self.device)
 
     def save_model(self, filepath):
         """
         Saves the model to a file
         """
-        save_dict = {}
-        if hasattr(self, 'policy_network'):
-            save_dict['policy_network'] = self.policy_network.state_dict()
-        if hasattr(self, 'value_network'):
-            save_dict['value_network'] = self.value_network.state_dict()
-        torch.save(save_dict, filepath)
+        raise NotImplementedError("save_model method not implemented in BaseAgent")
 
     def load_model(self, filepath):
         """
         Loads the model from a file
         """
-        checkpoint = torch.load(filepath)
-        if hasattr(self, 'policy_network') and 'policy_network' in checkpoint:
-            self.policy_network.load_state_dict(checkpoint['policy_network'])
-        if hasattr(self, 'value_network') and 'value_network' in checkpoint:
-            self.value_network.load_state_dict(checkpoint['value_network'])
+        raise NotImplementedError("load_model method not implemented in BaseAgent")
