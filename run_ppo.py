@@ -59,7 +59,7 @@ def create_env(
         else env
     )
     if use_repeat_action:
-        env = ActionRepeatWrapper(env, skip_frames=frame_skip)
+        env = ActionRepeatWrapper(env, repeat=frame_skip+1) # +1 to account for original step
     if use_policy_action_map:
         env = ActionMapWrapper(env, use_throttle=policy_outputs == 2)
     if use_promote_speed:
@@ -101,7 +101,7 @@ def train(device, config):
         use_policy_action_map=config.get("use_policy_action_map", True),
         policy_outputs=config.get("policy_outputs", 3),
         frame_stack=config.get("frame_stack", 8),
-        frame_skip=config.get("frame_skip", 2),
+        frame_skip=frame_skip,
         use_promote_speed=config.get("use_promote_speed", False),
     )
 
