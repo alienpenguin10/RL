@@ -2,7 +2,8 @@
 
 # General settings
 evaluation_mode: false # Set to true for loading a trained model
-model_file: ppo_model.pth
+train_from_checkpoint: true
+model_file: model_file.pth
 
 # Environment settings
 env_id: CarRacing-v3
@@ -10,8 +11,8 @@ render_environment: false
 use_grayscale: true
 use_repeat_action: false
 use_policy_action_map: true
-frame_stack: 8
-frame_skip: 2
+frame_stack: 4
+frame_skip: 3
 
 # Training settings
 max_timesteps: 1000000
@@ -32,7 +33,7 @@ truncated_penalty: -20
 # Agent hyperparameters
 policy_outputs: 2  # 2: steer and speed; 3: steer, gas, brake
 buffer_size: 4096
-batch_size: 128
+batch_size: 256
 epochs: 4
 learning_rate: 0.0003
 use_learning_rate_scheduler: false
