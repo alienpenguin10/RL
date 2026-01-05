@@ -193,20 +193,23 @@ def train(device, config):
             episode_reward += reward
 
             # Crucial: Only treat as 'done' if terminated (failure), not truncated (time limit)
-            if (
-                use_episode_cutoff
+            if (use_episode_cutoff
                 and episode_steps >= episode_cutoff
-                and rewards.numel() >= episode_cutoff
-                and rewards[step - episode_cutoff + 1 : step - 1].sum()
-                < -episode_cutoff * 0.09
-            ):
-                # Early termination if no progress for extended period
-                penalty = min(
-                    cutoff_penalty + (episode_steps - episode_cutoff) * 0.1, 0.0
-                )  # Large negative reward for stagnation reduced if car was performing well before
-                reward += penalty
-                episode_reward += penalty
-                truncated = True
+                and rewards.numel() >= episode_cutoff):
+                reward_slice = (
+                    slice(step - episode_cutoff + 1, step - 1)
+                    if not use_repeat_action
+                    else slice(step - episode_cutoff // (frame_skip + 1) + 1, step - 1)
+                )
+                if (episode_cutoff >= 100 and rewards[reward_slice].sum() < -episode_cutoff * 0.09 or
+                    episode_cutoff < 100 and rewards[reward_slice].sum() < -episode_cutoff * 0.06):
+                    # Early termination if no progress for extended period
+                    penalty = min(
+                        cutoff_penalty + (episode_steps - episode_cutoff) * 0.1, 0.0
+                    )  # Large negative reward for stagnation reduced if car was performing well before
+                    reward += penalty
+                    episode_reward += penalty
+                    truncated = True
             if use_truncated_penalty and truncated:
                 reward += truncated_penalty
                 episode_reward += truncated_penalty
