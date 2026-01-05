@@ -124,6 +124,13 @@ def train(device, config):
         max_grad_norm=config.get("max_grad_norm", 0.0),
         process_action_decay=config.get("process_action_decay", 0.99),
     )
+    if config.get("train_from_checkpoint", False):
+        model_file = config.get("model_file", None)
+        if model_file is not None:
+            print(f"Loading model from checkpoint: {model_file}")
+            agent.load_model(f"./models/{model_file}")
+        else:
+            print("No model file specified for checkpoint loading. Starting fresh training.")
 
     state, info = env.reset()
     state = torch.Tensor(state).to(device)
@@ -288,7 +295,7 @@ def test(device, config, model_path):
     policy_outputs = config["policy_outputs"]
     env = create_env(
         env_name=config.get("env_id", "CarRacing-v3"),
-        render_env=False,
+        render_env=config.get("render_environment", False),
         use_grayscale=True,
         use_repeat_action=False,
         use_policy_action_map=True,
@@ -313,6 +320,7 @@ def test(device, config, model_path):
         next_state, reward, terminated, truncated, info = env.step(policy_action)
         episode_rewards[episodes] += reward
         if terminated or truncated:
+            print(f"Episode {episodes} finished with reward: {episode_rewards[episodes]:.2f}")
             next_state, _ = env.reset()
             episodes += 1
         state = torch.Tensor(next_state).to(device)
