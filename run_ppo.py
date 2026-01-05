@@ -148,8 +148,8 @@ def train(device, config):
     def save_on_interrupt(signum, frame):
         """Save model when interrupted (Ctrl+C)"""
         print(f"\n\nInterrupted! Saving model from episode {episode}...")
-        agent.save_model(f"./models/ppo_{episode}_interrupted.pth")
-        print(f"Model saved to ./models/ppo_{episode}_interrupted.pth")
+        agent.save_model(f"./models/{config.get('checkpoint_directory')}/ppo_{episode}_interrupted.pth")
+        print(f"Model saved to ./models/{config.get('checkpoint_directory')}/ppo_{episode}_interrupted.pth")
         if WANDB_AVAILABLE:
             wandb.finish()
         env.close()
@@ -278,12 +278,12 @@ def train(device, config):
             wandb.log(log_dict)
 
         if save_checkpoints and (total_steps >= checkpoint):
-            agent.save_model(f"./models/ppo_{episode}_checkpoint.pth")
+            agent.save_model(f"./models/{config.get('checkpoint_directory')}/ppo_{episode}_checkpoint.pth")
             checkpoint += checkpoint_interval
 
     # Save final model
     print(f"\nTraining complete! Saving final model...")
-    agent.save_model(f"./models/ppo_{episode}_final.pth")
+    agent.save_model(f"./models/{config.get('checkpoint_directory')}/ppo_{episode}_final.pth")
 
     if WANDB_AVAILABLE and log_wandb:
         wandb.finish()
@@ -334,13 +334,13 @@ if __name__ == "__main__":
     os.makedirs("./models", exist_ok=True)
     # Ensure replay directory exists
     os.makedirs("./models/replay", exist_ok=True)
-
+    
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     parser = argparse.ArgumentParser()
     parser.add_argument("--config", type=str, required=True, help="Path to config file")
     args = parser.parse_args()
     config = load_config(args.config)
-
+    os.makedirs(f"./models/{config.get('checkpoint_directory')}", exist_ok=True)
     if config.get("evaluation_mode", False):
         print("Running in TEST MODE")
         test(

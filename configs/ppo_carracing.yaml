@@ -3,7 +3,8 @@
 # General settings
 evaluation_mode: false # Set to true for loading a trained model
 train_from_checkpoint: true
-model_file: model_file.pth
+model_file: ppo_1262_final.pth
+checkpoint_directory: test_1
 
 # Environment settings
 env_id: CarRacing-v3
@@ -15,12 +16,12 @@ frame_stack: 4
 frame_skip: 3
 
 # Training settings
-max_timesteps: 1000000
+max_timesteps: 3000000
 save_checkpoints: true
 checkpoint_interval: 50000
 save_recordings: false
 recording_threshold: 800.0
-use_promote_speed: true
+use_promote_speed: false
 promote_speed_decay: 0.99
 
 # Episode settings
