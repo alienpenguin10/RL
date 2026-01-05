@@ -43,6 +43,7 @@ def create_env(
     use_frame_stack,
     use_skip_frame,
     n_stack,
+    frame_skip,
     use_throttle_action=True,
     record_video=False,
     video_folder=None,
@@ -61,9 +62,6 @@ def create_env(
         patience=100,  # Kills episode if stuck for 100 steps
     )
 
-    if use_skip_frame:
-        env = ActionRepeatWrapper(env, repeat=4)
-
     if record_video and video_folder:
         os.makedirs(video_folder, exist_ok=True)
         env = RecordVideo(
@@ -78,7 +76,12 @@ def create_env(
         env = PreprocessWrapper(env, resize=(84, 84), grayscale=use_grayscale)
 
     if use_frame_stack:
-        env = FrameStackWrapper(env, n_stack, skip_frames=use_skip_frame and 4 or 0)
+        env = FrameStackWrapper(
+            env, n_stack, skip_frames=use_skip_frame and frame_skip or 0
+        )
+
+    if use_skip_frame:
+        env = ActionRepeatWrapper(env, repeat=frame_skip)
 
     return env
 
@@ -94,6 +97,7 @@ def train_sac_stepwise(config):
     use_frame_stack = config["use_frame_stack"]
     use_throttle_action = config.get("use_throttle_action", False)
     n_stack = config.get("n_stack", 4)
+    frame_skip = config.get("frame_skip", 4)
     log_freq = config["log_freq"]
     max_ep_len = config["max_ep_len"]
     record_video = config.get("record_video", False)
@@ -116,6 +120,7 @@ def train_sac_stepwise(config):
         use_frame_stack,
         use_skip_frame,
         n_stack,
+        frame_skip,
         use_throttle_action,
         record_video=False,
     )
@@ -138,6 +143,7 @@ def train_sac_stepwise(config):
         use_frame_stack,
         use_skip_frame,
         n_stack,
+        frame_skip,
         use_throttle_action,
         record_video=record_video,
         video_folder=video_folder,
