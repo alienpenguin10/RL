@@ -288,8 +288,8 @@ def test(device, config, model_path):
     policy_outputs = config["policy_outputs"]
     env = create_env(
         env_name=config.get("env_id", "CarRacing-v3"),
-        render_env=True,
-        use_grayscale=False,
+        render_env=False,
+        use_grayscale=True,
         use_repeat_action=False,
         use_policy_action_map=True,
         policy_outputs=policy_outputs,
@@ -303,17 +303,22 @@ def test(device, config, model_path):
 
     state, _ = env.reset()
     state = torch.Tensor(state).to(device)
-    steps = 0
+    episodes = 0
+    episode_rewards = np.zeros(10)
 
-    while steps < 5000:
+    # Run for 10 episodes
+    while episodes < 10:
         with torch.no_grad():
             policy_action, _, _ = agent.policy.get_action(state)
-        # processed_action = agent.process_action(policy_action)
         next_state, reward, terminated, truncated, info = env.step(policy_action)
-        steps += 1
+        episode_rewards[episodes] += reward
         if terminated or truncated:
             next_state, _ = env.reset()
+            episodes += 1
         state = torch.Tensor(next_state).to(device)
+    env.close()
+    avg_reward = np.mean(episode_rewards)
+    print(f"Average Reward over 10 episodes: {avg_reward:.2f}")
 
 
 if __name__ == "__main__":
