@@ -317,19 +317,27 @@ def test(device, config, model_path):
     episode_rewards = np.zeros(10)
 
     # Run for 10 episodes
-    while episodes < 10:
+    while episodes < 5:
         with torch.no_grad():
             policy_action, _, _ = agent.policy.get_action(state)
         next_state, reward, terminated, truncated, info = env.step(policy_action)
         episode_rewards[episodes] += reward
         if terminated or truncated:
-            print(f"Episode {episodes} finished with reward: {episode_rewards[episodes]:.2f}")
+            print(f"Episode {episodes+1} finished with reward: {episode_rewards[episodes]:.2f}")
             next_state, _ = env.reset()
             episodes += 1
         state = torch.Tensor(next_state).to(device)
     env.close()
     avg_reward = np.mean(episode_rewards)
-    print(f"Average Reward over 10 episodes: {avg_reward:.2f}")
+    std_reward = np.std(episode_rewards)
+    min_reward = np.min(episode_rewards)
+    max_reward = np.max(episode_rewards)
+    print(f"Mean Reward over {episodes} episodes: {avg_reward:.2f} ± {std_reward:.2f}")
+    print(f"Min Reward: {min_reward:.2f}, Max Reward: {max_reward:.2f}")
+    # save results to a file and append if file exists
+    with open("ppo_model_results.txt", "a") as f:
+        f.write(f"Mean Reward: {avg_reward:.2f} ± {std_reward:.2f}\n")
+        f.write(f"Min Reward: {min_reward:.2f}, Max Reward: {max_reward:.2f}\n")
 
 
 if __name__ == "__main__":
