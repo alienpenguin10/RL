@@ -1,18 +1,21 @@
-# Reinforcement Learning 
+# Reinforcement Learning
 
-<img src="assets/car_racing.jpeg" alt="Car Racing Environment" width="500">
+<img src="assets/car_racing.png" alt="Car Racing Environment" width="200"/>
 
-A collection of reinforcement learning implementations focused on training agents for various environments, including the Car Racing environment.
+A collection of reinforcement learning implementations focused on training agents for the CarRacing v3 environment from
+the [farama Gym library](https://gymnasium.farama.org/#).
 
-## 🚀 Setup
+## Setup
 
 ### Prerequisites
 
 Use python version between 3.10 to 3.12
 
-Before installation, ensure you have SWIG installed:
+Before installation, ensure you have SWIG
+installed (used for [Box2D](https://gymnasium.farama.org/environments/box2d/)):
 
 **macOS:**
+
 ```bash
 brew install swig
 ```
@@ -23,75 +26,72 @@ Follow the instructions at: https://open-box.readthedocs.io/en/latest/installati
 ### Installation
 
 1. Create and activate a virtual environment:
+
 ```bash
-python3 -m venv rl
-source rl/bin/activate  # On Windows: rl\Scripts\activate
+python3 -m venv .venv
+source .venv/bin/activate  # On Windows: .venv\Scripts\activate
 ```
 
 2. Install dependencies:
+
 ```bash
 pip install -r requirements.txt
-pip install "ray[rllib]" torch
 ```
 
 3. Set up environment variables:
+
 ```bash
 cp .env.example .env
 # Edit .env and add your WandB API key from https://wandb.ai/authorize
 ```
 
-**Note:** The `.env` file contains your WandB API key for experiment tracking. Make sure to add `.env` to your `.gitignore` to keep your API key secure.
-
-## 🎮 Usage
+## Usage
 
 ### Car Racing Environment
 
-To get a feel for the environment you can play the game manually:
+To manually control the Car Racing environment, run:
+
 ```bash
-python car_racing_manual.py
+python evaluation/car_racing_manual.py
 ```
+
 Controls: W (accelerate), A/D (steer), S (brake), ESC/Q (quit)
 
-Run the Car Racing simulation with random actions:
+Random Agent Evaluation:
+
 ```bash
-python car_racing_env.py
+python evaluation/car_racing_random.py
 ```
 
 ### Training Examples
 
-
 **Train PPO Agent on Car Racing:**
+
 ```bash
-python python run_ppo.py --config ./configs/sac_carracing-throttle-hidden-dims.yaml
+python python run_ppo.py --config ./configs/ppo_carracing.yaml
 ```
 
 **Train SAC Agent on Car Racing:**
+
 ```bash
-python python run_sac.py --config ./configs/sac_carracing-throttle-hidden-dims.yaml
+python python run_sac.py --config ./configs/sac_carracing.yaml
 ```
 
-## 📂 Project Structure
+## File Structure
 
 ```
-├── 0.Learning/              # Learning materials and basic implementations
-│   ├── Deep-Reinforcement-Learning-Notebooks/
-│   ├── dqn_cartpole.py
-│   ├── q_frozenlake.py
-│   └── REINFORCE_lunar_landing.py
-├── baseline/            # Baseline implementations for benchmarking
-├── agents/                    # Saved models
-├── evaluation/                    # Inference and run env in manual mode
-├── plots/                  # GIFs and visualizations
-├── models/                    # Saved models
-├── CarRacingEnv/                    # Environment Adjustments
-├── run_sac.py        # Train SAC agent
-├── run_vpg_reinforce.py        # Train VPG / REINFORCE agents
-└── run_ppo.py        # Train PPO agent
+.
+├── agents/ - Implementations of RL agents
+├── assets/ - Images and media assets
+├── baselines/ - Pre-implemented baseline agents
+├── configs/ - Configuration files for training agents
+├── env/ - Custom environment wrappers
+├── evaluation/ - Scripts for evaluating agents
+├── plots/ - Directory for generating model architecture plots
+├── README.md
+├── requirements.txt
+├── run_ppo.py - Entry point for training PPO agents
+├── run_sac.py - Entry point for training SAC agents
+├── run_vpg_reinforce.py - Entry point for training VPG/Reinforce agents
+├── scripts - Utility scripts
 ```
-
-## 🧠 Algorithms Implemented
-
-- **REINFORCE**: Monte Carlo policy gradient
-- **VPG (Vanilla Policy Gradient)**: Basic policy gradient method
-- **PPO (Proximal Policy Optimization)**: State-of-the-art policy gradient
-- **SAC (Soft Actor-Critic)**: Off-policy actor-critic algorithm

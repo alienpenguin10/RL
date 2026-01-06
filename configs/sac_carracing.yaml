@@ -6,43 +6,43 @@ use_grayscale: true
 use_frame_stack: true
 use_skip_frame: true
 use_throttle_action: true
-n_stack: 4
-frame_skip: 4
+n_stack: 2
+frame_skip: 2
 
 # Training settings
 max_timesteps: 500000
-start_steps: 20000 # Random warmup steps
+start_steps: 1000 # Random warmup steps
 checkpoint_interval: 5000  # How often to evaluate + record video
 log_freq: 1000
 
 # Agent hyperparameters
-batch_size: 128
+batch_size: 256
 gamma: 0.99
-tau: 0.005
+tau: 0.02
 alpha: 0.1
 automatic_entropy_tuning: true
-policy_learning_rate: 0.0003
-q_learning_rate: 0.0003
-alpha_learning_rate: 0.0001
+policy_learning_rate: 0.00073
+q_learning_rate: 0.00073
+alpha_learning_rate: 0.00073
 policy_weight_decay: 0.0001
 q_weight_decay: 0.0001
 alpha_weight_decay: 0.0001
 
 # Network architecture
-q_hidden_dims: [ 512, 256, 256 ]
-policy_hidden_dims: [ 512, 256, 256 ]
+q_hidden_dims: [ 2048, 2048 ]
+policy_hidden_dims: [ 2048, 2048 ]
 
 # Replay buffer
-buffer_size: 100000
+buffer_size: 500000
 
 # Training dynamics
-train_freq: 1  # Update every N steps
-gradient_steps: 2  # Number of gradient updates per training step
+train_freq: 8  # Update every N steps
+gradient_steps: 10  # Number of gradient updates per train_freq
 
 # Episode settings
 max_ep_len: 1000
 
 # Logging
 project_name: rl-training
-run_name: sac-carracing-v3-throttle-cleanup
+run_name: sac-carracing-v3
 record_video: true
