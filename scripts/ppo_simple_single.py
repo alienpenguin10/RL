@@ -55,7 +55,7 @@ class ActorCritic(nn.Module):
         features = self.network(state)
         return self.critic(features)
 
-    def get_action(self, state):
+    def get_action(self, state, deterministic=False):
         # Takes a single state -> samples a new action from policy dist
         features = self.network(state)
 
@@ -72,8 +72,12 @@ class ActorCritic(nn.Module):
         # Create Beta Distribution
         dist = torch.distributions.Beta(alpha, beta)
 
-        # Sample raw actions in range
-        raw_action = dist.sample()
+        if deterministic:
+            # Mean of Beta(alpha, beta) is alpha / (alpha + beta)
+            raw_action = alpha / (alpha + beta)
+        else:
+            # Sample raw actions in range
+            raw_action = dist.sample()
 
         # Calculate Log Prob (sum over the 3 action dimensions)
         action_log_probs_per_dim = dist.log_prob(raw_action)
@@ -247,7 +251,7 @@ VALUE_COEFF = 0.5
 ENTROPY_COEFF = 0.01
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-def train(env_name='CarRacing-v3', model_path=None):
+def train(env_name='CarRacing-v3', model_path=None, eval_mode=False):
 
     """ Hyperparameters """
 
@@ -269,7 +273,8 @@ def train(env_name='CarRacing-v3', model_path=None):
     # Import frame stacking wrapper
     from wrappers import PreprocessWrapper, FrameStack 
     
-    env = gym.make('CarRacing-v3', continuous=True)
+    render_mode = "human" if eval_mode else None
+    env = gym.make('CarRacing-v3', continuous=True, render_mode=render_mode)
     env = PreprocessWrapper(env)
     env = FrameStack(env)
     env = gym.wrappers.RecordEpisodeStatistics(env)
@@ -288,6 +293,31 @@ def train(env_name='CarRacing-v3', model_path=None):
         start_update = 0
         if model_path is not None:
             print(f"Model path {model_path} does not exist, starting from scratch")
+            
+    if eval_mode:
+        print("Starting Evaluation...")
+        state, _ = env.reset()
+        state = torch.Tensor(state).to(DEVICE)
+        done = False
+        episode_reward = 0
+        
+        while True:
+            # env.render() is handled by render_mode='human'
+            with torch.no_grad():
+                action_tensor, _, _ = agent.policy.get_action(state.unsqueeze(0), deterministic=True)
+                
+            raw_action = action_tensor.cpu().numpy()
+            next_state, reward, terminated, truncated, _ = env.step(raw_action)
+            state = torch.Tensor(next_state).to(DEVICE)
+            episode_reward += reward
+            
+            if terminated or truncated:
+                print(f"Episode Finished. Reward: {episode_reward}")
+                state, _ = env.reset()
+                state = torch.Tensor(state).to(DEVICE)
+                episode_reward = 0
+                
+        return # End here for eval mode
     
     # Create models directory if it doesn't exist
     models_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'models')
@@ -393,6 +423,7 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Train PPO agent')
     parser.add_argument('--env', type=str, default='CarRacing-v3', help='Environment name')
     parser.add_argument('--load', type=str, default=None, help='Path to model checkpoint to load')
+    parser.add_argument('--eval', action='store_true', help='Run in evaluation mode (render only)')
     args = parser.parse_args()
     
-    train(env_name=args.env, model_path=args.load)
+    train(env_name=args.env, model_path=args.load, eval_mode=args.eval)
