@@ -3,8 +3,8 @@
 # General settings
 evaluation_mode: false # Set to true for loading a trained model
 train_from_checkpoint: true
-model_file: ppo_1262_final.pth
-checkpoint_directory: test_1
+model_file: example_model.pth
+checkpoint_directory: model_checkpoint_dir
 
 # Environment settings
 env_id: CarRacing-v3
@@ -21,14 +21,14 @@ save_checkpoints: true
 checkpoint_interval: 50000
 save_recordings: false
 recording_threshold: 800.0
-use_promote_speed: false
+use_promote_speed: true
 promote_speed_decay: 0.99
 
 # Episode settings
-use_episode_cutoff: false
+use_episode_cutoff: true
 episode_cutoff_steps: 300
 episode_cutoff_penalty: -100
-use_truncated_penalty: false
+use_truncated_penalty: true
 truncated_penalty: -20
 
 # Agent hyperparameters
