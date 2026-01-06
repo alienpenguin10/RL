@@ -72,16 +72,14 @@ def create_env(
             disable_logger=True,
         )
 
+    if use_skip_frame:
+        env = ActionRepeatWrapper(env, repeat=frame_skip)
+
     if use_frame_stack or use_grayscale:
         env = PreprocessWrapper(env, resize=(84, 84), grayscale=use_grayscale)
 
     if use_frame_stack:
-        env = FrameStackWrapper(
-            env, n_stack, skip_frames=use_skip_frame and frame_skip or 0
-        )
-
-    if use_skip_frame:
-        env = ActionRepeatWrapper(env, repeat=frame_skip)
+        env = FrameStackWrapper(env, n_stack)
 
     return env
 
