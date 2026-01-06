@@ -311,13 +311,14 @@ def test(device, config, model_path):
     agent = PPOAgent(device, env, policy_outputs=policy_outputs)
     agent.load_model(model_path)
 
+    max_episodes = 5
     state, _ = env.reset()
     state = torch.Tensor(state).to(device)
     episodes = 0
-    episode_rewards = np.zeros(10)
+    episode_rewards = np.zeros(max_episodes)
 
     # Run for 10 episodes
-    while episodes < 5:
+    while episodes < max_episodes:
         with torch.no_grad():
             policy_action, _, _ = agent.policy.get_action(state)
         next_state, reward, terminated, truncated, info = env.step(policy_action)
